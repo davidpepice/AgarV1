@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgarV1 | Client</title>
+    <link rel="stylesheet" href="assets/css/index.css">
+</head>
+
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="main-menu" class="overlay">
+        <h1>AgarV1</h1>
+        <input type="text" id="nickname" placeholder="Nickname" maxlength="15">
+        <input type="text" id="server-url" value="ws://localhost:8080" placeholder="Server URL">
+        <button id="play-btn">Play</button>
+    </div>
+
+    <div id="leaderboard" class="hud-item" style="display: none;">
+        <h3>Leaderboard</h3>
+        <ol id="lb-list"></ol>
+    </div>
+
+    <div id="stats" class="hud-item" style="display: none;">
+        <span id="fps">FPS: 60</span> |
+        <span id="mass">Mass: 10</span>
+    </div>
+
+    <script src="assets/js/core/Game.js" type="module"></script>
+</body>
+
+</html>
