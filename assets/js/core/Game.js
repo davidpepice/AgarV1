@@ -37,7 +37,16 @@ class Game {
             leaderboard: document.getElementById('leaderboard'),
             stats: document.getElementById('stats'),
             lbList: document.getElementById('lb-list'),
-            mass: document.getElementById('mass')
+            mass: document.getElementById('mass'),
+            showNames: document.getElementById('show-names'),
+            showMass: document.getElementById('show-mass'),
+            jellyPhysics: document.getElementById('jelly-physics')
+        };
+
+        this.config = {
+            showNames: true,
+            showMass: true,
+            jellyPhysics: true
         };
 
         this.init();
@@ -48,6 +57,12 @@ class Game {
         window.addEventListener('resize', () => this.resize());
         this.ui.playBtn.addEventListener('click', () => this.handlePlay());
         this.ui.spectateBtn.addEventListener('click', () => this.handleSpectate());
+
+        // Config Bindings
+        this.ui.showNames.addEventListener('change', (e) => this.config.showNames = e.target.checked);
+        this.ui.showMass.addEventListener('change', (e) => this.config.showMass = e.target.checked);
+        this.ui.jellyPhysics.addEventListener('change', (e) => this.config.jellyPhysics = e.target.checked);
+
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
         window.addEventListener('wheel', (e) => this.handleWheel(e), { passive: true });
@@ -66,9 +81,23 @@ class Game {
     }
 
     handlePlay() {
-        this.nickname = this.ui.nickname.value || 'Unnamed';
+        const nickname = this.ui.nickname.value || 'Unnamed';
         const url = this.ui.serverUrl.value || 'ws://localhost:8080';
 
+        // If already connected to same server, just spawn or close menu
+        if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
+            this.ui.mainMenu.style.display = 'none';
+            this.ui.leaderboard.style.display = 'block';
+            this.ui.stats.style.display = 'block';
+
+            if (nickname !== this.nickname || this.ownIds.length === 0) {
+                this.nickname = nickname;
+                this.connection.spawn(this.nickname);
+            }
+            return;
+        }
+
+        this.nickname = nickname;
         this.ui.mainMenu.style.display = 'none';
         this.ui.leaderboard.style.display = 'block';
         this.ui.stats.style.display = 'block';
@@ -77,9 +106,18 @@ class Game {
         this.connection.connect(url, this.nickname);
     }
     handleSpectate() {
-        this.nickname = this.ui.nickname.value || 'Unnamed';
+        const nickname = this.ui.nickname.value || 'Unnamed';
         const url = this.ui.serverUrl.value || 'ws://localhost:8080';
 
+        if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
+            this.ui.mainMenu.style.display = 'none';
+            this.ui.leaderboard.style.display = 'block';
+            this.ui.stats.style.display = 'block';
+            this.connection.spectate();
+            return;
+        }
+
+        this.nickname = nickname;
         this.ui.mainMenu.style.display = 'none';
         this.ui.leaderboard.style.display = 'block';
         this.ui.stats.style.display = 'block';

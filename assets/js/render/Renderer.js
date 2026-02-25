@@ -101,6 +101,7 @@ export default class Renderer {
     drawNodes(ctx) {
         const sortedNodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
         const now = this.game.getSyncedTime();
+        const useJelly = this.game.config.jellyPhysics;
 
         // 1. Rebuild Quadtree for point-based collisions (Jelly Physics)
         const b = this.game.borders || { l: -10000, t: -10000, r: 10000, b: 10000 };
@@ -115,12 +116,14 @@ export default class Renderer {
 
             if (node.size < 1) return;
 
-            // Initialize/Update point count
-            this.game.updateNumPoints(node);
+            if (useJelly) {
+                // Initialize/Update point count
+                this.game.updateNumPoints(node);
 
-            // Insert each point into the quadtree for collision checks
-            for (const point of node.points) {
-                quadtree.insert(point);
+                // Insert each point into the quadtree for collision checks
+                for (const point of node.points) {
+                    quadtree.insert(point);
+                }
             }
         });
 
@@ -128,8 +131,10 @@ export default class Renderer {
         sortedNodes.forEach(node => {
             if (node.size < 1) return;
 
-            // Apply Doblesplit movePoints logic
-            this.game.movePoints(node, quadtree, b);
+            if (useJelly) {
+                // Apply Doblesplit movePoints logic
+                this.game.movePoints(node, quadtree, b);
+            }
 
             ctx.fillStyle = node.color || '#fff';
             ctx.strokeStyle = node.color || '#fff';
@@ -139,7 +144,7 @@ export default class Renderer {
             ctx.beginPath();
 
             const numPoints = node.points.length;
-            if (numPoints > 0) {
+            if (useJelly && numPoints > 0) {
                 const points = node.points;
                 let p0 = points[0];
                 if (p0) {
@@ -156,25 +161,35 @@ export default class Renderer {
             ctx.fill();
             if (node.jagged) ctx.stroke();
 
-            // Nickname and Mass
-            if (node.size > 14) {
-                ctx.fillStyle = '#fff';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-
-                if (node.name) {
-                    ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
-                    ctx.fillText(node.name, node.x, node.y - (node.size * 0.1));
-
-                    ctx.font = `bold ${Math.max(10, node.size * 0.25)}px Inter`;
-                    const mass = Math.floor((node.size * node.size) / 100);
-                    ctx.fillText(mass, node.x, node.y + (node.size * 0.25));
-                } else {
-                    ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
-                    const mass = Math.floor((node.size * node.size) / 100);
-                    ctx.fillText(mass, node.x, node.y);
-                }
-            }
+            this.drawText(ctx, node);
         });
+    }
+
+    drawText(ctx, node) {
+        if (node.size > 14) {
+            const config = this.game.config;
+            ctx.fillStyle = '#fff';
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = 13;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            const showName = config.showNames && node.name;
+            const showMass = config.showMass;
+
+            if (showName) {
+                ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
+                ctx.strokeText(node.name, node.x, node.y - (showMass ? node.size * 0.1 : 0));
+                ctx.fillText(node.name, node.x, node.y - (showMass ? node.size * 0.1 : 0));
+            }
+
+            if (showMass) {
+                ctx.font = `bold ${Math.max(10, node.size * 0.25)}px Inter`;
+                const mass = Math.floor((node.size * node.size) / 100);
+                const yOffset = showName ? (node.size * 0.25) : 0;
+                ctx.strokeText(mass, node.x, node.y + yOffset);
+                ctx.fillText(mass, node.x, node.y + yOffset);
+            }
+        }
     }
 }
