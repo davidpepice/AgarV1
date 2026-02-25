@@ -166,11 +166,11 @@ export default class Renderer {
     }
 
     drawText(ctx, node) {
-        if (node.size > 14) {
+        if (node.size > 30 && !node.jagged) {
             const config = this.game.config;
             ctx.fillStyle = '#fff';
             ctx.strokeStyle = '#000';
-            ctx.lineWidth = 13;
+            ctx.lineWidth = 5;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
 
