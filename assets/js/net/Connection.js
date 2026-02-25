@@ -7,7 +7,7 @@ export default class Connection {
         this.url = '';
     }
 
-    connect(url, nickname) {
+    connect(url, nickname, spectate = false) {
         this.url = url;
         console.log(`Connecting to ${url}...`);
 
@@ -20,7 +20,7 @@ export default class Connection {
             this.ws = new WebSocket(url);
             this.ws.binaryType = 'arraybuffer';
 
-            this.ws.onopen = () => this.onOpen(nickname);
+            this.ws.onopen = () => this.onOpen(nickname, spectate);
             this.ws.onmessage = (msg) => this.onMessage(msg);
             this.ws.onclose = () => this.onClose();
             this.ws.onerror = (err) => this.onError(err);
@@ -29,14 +29,24 @@ export default class Connection {
         }
     }
 
-    onOpen(nickname) {
+    onOpen(nickname, spectate) {
         console.log("Connected to Ogar v6!");
 
         // Protocol 6 Handshake
         this.send(new Uint8Array([254, 6, 0, 0, 0])); // Version 6
         this.send(new Uint8Array([255, 1, 0, 0, 0])); // Key 1
 
-        this.spawn(nickname);
+        if (spectate) {
+            this.spectate();
+        } else {
+            this.spawn(nickname);
+        }
+    }
+
+    spectate() {
+        const writer = new BinaryWriter();
+        writer.writeUInt8(PROTOCOL.SEND.SPECTATE);
+        this.send(writer.build());
     }
 
     spawn(nickname) {
@@ -49,7 +59,6 @@ export default class Connection {
     onMessage(msg) {
         const reader = new BinaryReader(new DataView(msg.data));
         const packetId = reader.readUInt8();
-
         try {
             switch (packetId) {
                 case 0x10: // UPDATE_NODES
@@ -61,8 +70,10 @@ export default class Connection {
                     this.game.renderer.targetScale = reader.readFloat32();
                     break;
                 case 0x12: // CLEAR_ALL
+                    this.game.clearAll();
+                    break;
                 case 0x14: // CLEAR_OWN
-                    this.game.reset();
+                    this.game.clearOwn();
                     break;
                 case 0x20: // NEW_CELL (Own ID)
                     this.game.addOwnId(reader.readUInt32());
@@ -124,13 +135,19 @@ export default class Connection {
             let skin = flags.updSkin ? reader.readStringUTF8() : null;
             let name = flags.updName ? reader.readStringUTF8() : null;
 
-            this.game.updateNode(id, x, y, size, color, name);
+            this.game.updateNode(id, x, y, size, color, name, flags.jagged);
         }
 
         // 3. Disappear records
         const removeCount = reader.readUInt16();
         for (let i = 0; i < removeCount; i++) {
             this.game.removeNode(reader.readUInt32());
+        }
+
+        // Cigar2: Check for timestamp at the end of the packet (4 bytes)
+        if (reader.has(4)) {
+            const serverTime = reader.readUInt32();
+            this.game.syncTime(serverTime);
         }
     }
 

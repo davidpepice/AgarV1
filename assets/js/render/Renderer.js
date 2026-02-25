@@ -1,3 +1,6 @@
+import PointQuadTree from '../utils/Quadtree.js';
+import { QUADTREE_MAX_POINTS } from '../core/Game.js';
+
 export default class Renderer {
     constructor(game) {
         this.game = game;
@@ -20,35 +23,32 @@ export default class Renderer {
     }
 
     updateCamera() {
-        let targetCamX = this.camX;
-        let targetCamY = this.camY;
-        let maxNodeSize = 0;
-        let count = 0;
-
         const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
             return this.game.ownIds.includes(n.id) || (this.game.nickname && n.name === this.game.nickname && n.size > 15);
         });
 
         if (playerNodes.length > 0) {
-            let avgX = 0, avgY = 0;
+            let avgX = 0, avgY = 0, sumSize = 0;
             playerNodes.forEach(node => {
-                // Use raw target positions for camera base to avoid jitter from double interpolation
                 avgX += node.targetX;
                 avgY += node.targetY;
-                maxNodeSize = Math.max(maxNodeSize, node.targetSize);
-                count++;
+                sumSize += node.targetSize;
             });
-            targetCamX = avgX / count;
-            targetCamY = avgY / count;
 
-            this.targetScale = Math.max(0.02, Math.min(2.0, Math.pow(Math.min(64 / Math.max(maxNodeSize, 10), 1), 0.4)));
-            this.targetScale *= this.userZoom;
+            const targetCamX = avgX / playerNodes.length;
+            const targetCamY = avgY / playerNodes.length;
+
+            this.camX += (targetCamX - this.camX) * 0.15;
+            this.camY += (targetCamY - this.camY) * 0.15;
+
+            const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
+            this.targetScale = sizeScale * this.userZoom;
+        } else {
+            this.camX += (0 - this.camX) * 0.05;
+            this.camY += (0 - this.camY) * 0.05;
         }
 
-        // Smoother camera follow
-        this.camX += (targetCamX - this.camX) * 0.07;
-        this.camY += (targetCamY - this.camY) * 0.07;
-        this.scale += (this.targetScale - this.scale) * 0.03;
+        this.scale += (this.targetScale - this.scale) * 0.05;
     }
 
     render() {
@@ -92,6 +92,7 @@ export default class Renderer {
 
     drawBorders(ctx) {
         const b = this.game.borders;
+        if (!b) return;
         ctx.strokeStyle = '#ff0000';
         ctx.lineWidth = 15;
         ctx.strokeRect(b.l, b.t, b.r - b.l, b.b - b.t);
@@ -99,24 +100,80 @@ export default class Renderer {
 
     drawNodes(ctx) {
         const sortedNodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
+        const now = this.game.getSyncedTime();
+
+        // 1. Rebuild Quadtree for point-based collisions (Jelly Physics)
+        const b = this.game.borders || { l: -10000, t: -10000, r: 10000, b: 10000 };
+        const quadtree = new PointQuadTree(b.l, b.t, b.r - b.l, b.b - b.t, QUADTREE_MAX_POINTS);
+
+        // 2. Interpolate node positions and insert points into quadtree
         sortedNodes.forEach(node => {
-            // Match movement interpolation to server update frequency
-            node.x += (node.targetX - node.x) * 0.12;
-            node.y += (node.targetY - node.y) * 0.12;
-            node.size += (node.targetSize - node.size) * 0.1;
+            const dt = Math.min((now - node.lastUpdate) / 100, 1);
+            node.x = node.startX + (node.targetX - node.startX) * dt;
+            node.y = node.startY + (node.targetY - node.startY) * dt;
+            node.size = node.startSize + (node.targetSize - node.startSize) * dt;
 
             if (node.size < 1) return;
-            ctx.fillStyle = node.color || '#fff';
-            ctx.beginPath();
-            ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
-            ctx.fill();
 
-            if (node.name && node.size > 14) {
+            // Initialize/Update point count
+            this.game.updateNumPoints(node);
+
+            // Insert each point into the quadtree for collision checks
+            for (const point of node.points) {
+                quadtree.insert(point);
+            }
+        });
+
+        // 3. Update physics and Draw
+        sortedNodes.forEach(node => {
+            if (node.size < 1) return;
+
+            // Apply Doblesplit movePoints logic
+            this.game.movePoints(node, quadtree, b);
+
+            ctx.fillStyle = node.color || '#fff';
+            ctx.strokeStyle = node.color || '#fff';
+            ctx.lineWidth = node.jagged ? 10 : 0;
+            if (node.jagged) ctx.lineJoin = "miter";
+
+            ctx.beginPath();
+
+            const numPoints = node.points.length;
+            if (numPoints > 0) {
+                const points = node.points;
+                let p0 = points[0];
+                if (p0) {
+                    ctx.moveTo(p0.x, p0.y);
+                    for (let i = 1; i < numPoints; i++) {
+                        ctx.lineTo(points[i].x, points[i].y);
+                    }
+                }
+            } else {
+                ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
+            }
+
+            ctx.closePath();
+            ctx.fill();
+            if (node.jagged) ctx.stroke();
+
+            // Nickname and Mass
+            if (node.size > 14) {
                 ctx.fillStyle = '#fff';
-                ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                ctx.fillText(node.name, node.x, node.y);
+
+                if (node.name) {
+                    ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
+                    ctx.fillText(node.name, node.x, node.y - (node.size * 0.1));
+
+                    ctx.font = `bold ${Math.max(10, node.size * 0.25)}px Inter`;
+                    const mass = Math.floor((node.size * node.size) / 100);
+                    ctx.fillText(mass, node.x, node.y + (node.size * 0.25));
+                } else {
+                    ctx.font = `bold ${Math.max(12, node.size * 0.35)}px Inter`;
+                    const mass = Math.floor((node.size * node.size) / 100);
+                    ctx.fillText(mass, node.x, node.y);
+                }
             }
         });
     }

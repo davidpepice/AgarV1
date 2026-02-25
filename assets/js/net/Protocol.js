@@ -1,9 +1,10 @@
 export const PROTOCOL = {
-    VERSION: 6,
+    VERSION: 11,
     SEND: {
         VERSION: 254,
         KEY: 255,
         SPAWN: 0,
+        SPECTATE: 1,
         MOUSE: 16,
         SPLIT: 17,
         Q: 18,
