@@ -27,6 +27,7 @@ class Game {
         this.serverTime = 0;
         this.lastSyncLocal = 0;
         this.clockOffset = 0;
+        this.mapCenterSet = false;
 
         this.ui = {
             mainMenu: document.getElementById('main-menu'),
@@ -40,13 +41,16 @@ class Game {
             mass: document.getElementById('mass'),
             showNames: document.getElementById('show-names'),
             showMass: document.getElementById('show-mass'),
-            jellyPhysics: document.getElementById('jelly-physics')
+            jellyPhysics: document.getElementById('jelly-physics'),
+            animDelay: document.getElementById('anim-delay'),
+            animDelayValue: document.getElementById('anim-delay-value')
         };
 
         this.config = {
             showNames: true,
             showMass: true,
-            jellyPhysics: true
+            jellyPhysics: true,
+            animationDelay: 120
         };
 
         this.init();
@@ -62,6 +66,10 @@ class Game {
         this.ui.showNames.addEventListener('change', (e) => this.config.showNames = e.target.checked);
         this.ui.showMass.addEventListener('change', (e) => this.config.showMass = e.target.checked);
         this.ui.jellyPhysics.addEventListener('change', (e) => this.config.jellyPhysics = e.target.checked);
+        this.ui.animDelay.addEventListener('input', (e) => {
+            this.config.animationDelay = parseInt(e.target.value);
+            this.ui.animDelayValue.textContent = e.target.value;
+        });
 
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
@@ -130,6 +138,8 @@ class Game {
         this.serverTime = 0;
         this.lastSyncLocal = 0;
         this.clockOffset = 0;
+        this.mapCenterSet = false;
+        this.renderer.serverCamera = false;
     }
 
     clearAll() {
@@ -297,6 +307,9 @@ class Game {
                 targetX: x, targetY: y, targetSize: size,
                 startX: x, startY: y, startSize: size,
                 lastUpdate: now,
+                born: Date.now(),
+                destroyed: false,
+                dead: 0,
                 points: [],
                 pointsVel: []
             };
@@ -317,7 +330,11 @@ class Game {
     }
 
     removeNode(id) {
-        this.nodes.delete(id);
+        const node = this.nodes.get(id);
+        if (node) {
+            node.destroyed = true;
+            node.dead = Date.now();
+        }
         const idx = this.ownIds.indexOf(id);
         if (idx !== -1) this.ownIds.splice(idx, 1);
     }

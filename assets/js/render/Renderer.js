@@ -11,9 +11,15 @@ export default class Renderer {
 
         this.camX = 0;
         this.camY = 0;
+        this.target = {
+            x: 0,
+            y: 0,
+            scale: 1
+        };
         this.scale = 1;
-        this.targetScale = 1;
-        this.userZoom = 1; // Manual zoom level
+        this.userZoom = 1;
+        this.viewportScale = 1;
+        this.serverCamera = false; // true when server sends 0x11
         this.gridSize = 50;
     }
 
@@ -22,37 +28,53 @@ export default class Renderer {
         this.height = h;
     }
 
-    updateCamera() {
-        const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
-            return this.game.ownIds.includes(n.id) || (this.game.nickname && n.name === this.game.nickname && n.size > 15);
+    interpolateNodes() {
+        const now = this.game.getSyncedTime();
+        const animDelay = this.game.config.animationDelay;
+        this.game.nodes.forEach(node => {
+            const dt = Math.min((now - node.lastUpdate) / animDelay, 1);
+            node.x = node.startX + (node.targetX - node.startX) * dt;
+            node.y = node.startY + (node.targetY - node.startY) * dt;
+            node.size = node.startSize + (node.targetSize - node.startSize) * dt;
         });
+    }
 
-        if (playerNodes.length > 0) {
-            let avgX = 0, avgY = 0, sumSize = 0;
-            playerNodes.forEach(node => {
-                avgX += node.targetX;
-                avgY += node.targetY;
-                sumSize += node.targetSize;
+    updateCamera() {
+        // If the server is NOT sending camera position, calculate from player cells
+        if (!this.serverCamera) {
+            const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
+                return this.game.ownIds.includes(n.id);
             });
 
-            const targetCamX = avgX / playerNodes.length;
-            const targetCamY = avgY / playerNodes.length;
+            if (playerNodes.length > 0) {
+                let avgX = 0, avgY = 0, sumSize = 0;
+                playerNodes.forEach(node => {
+                    avgX += node.x;
+                    avgY += node.y;
+                    sumSize += node.size;
+                });
 
-            this.camX += (targetCamX - this.camX) * 0.15;
-            this.camY += (targetCamY - this.camY) * 0.15;
+                this.target.x = avgX / playerNodes.length;
+                this.target.y = avgY / playerNodes.length;
 
-            const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
-            this.targetScale = sizeScale * this.userZoom;
-        } else {
-            this.camX += (0 - this.camX) * 0.05;
-            this.camY += (0 - this.camY) * 0.05;
+                const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
+                this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+            }
         }
 
-        this.scale += (this.targetScale - this.scale) * 0.05;
+        // Smooth lerp toward target (Cigar2 style)
+        const lerpFactor = 0.1;
+        this.camX += (this.target.x - this.camX) * lerpFactor;
+        this.camY += (this.target.y - this.camY) * lerpFactor;
+        this.scale += (this.target.scale - this.scale) * 0.05;
     }
 
     render() {
+        // 1. Interpolate ALL nodes first
+        this.interpolateNodes();
+        // 2. Update camera using fresh interpolated positions
         this.updateCamera();
+
         const ctx = this.ctx;
 
         ctx.fillStyle = '#111';
@@ -100,27 +122,18 @@ export default class Renderer {
 
     drawNodes(ctx) {
         const sortedNodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
-        const now = this.game.getSyncedTime();
         const useJelly = this.game.config.jellyPhysics;
 
         // 1. Rebuild Quadtree for point-based collisions (Jelly Physics)
         const b = this.game.borders || { l: -10000, t: -10000, r: 10000, b: 10000 };
         const quadtree = new PointQuadTree(b.l, b.t, b.r - b.l, b.b - b.t, QUADTREE_MAX_POINTS);
 
-        // 2. Interpolate node positions and insert points into quadtree
+        // 2. Update jelly points and insert into quadtree
         sortedNodes.forEach(node => {
-            const dt = Math.min((now - node.lastUpdate) / 100, 1);
-            node.x = node.startX + (node.targetX - node.startX) * dt;
-            node.y = node.startY + (node.targetY - node.startY) * dt;
-            node.size = node.startSize + (node.targetSize - node.startSize) * dt;
-
             if (node.size < 1) return;
 
             if (useJelly) {
-                // Initialize/Update point count
                 this.game.updateNumPoints(node);
-
-                // Insert each point into the quadtree for collision checks
                 for (const point of node.points) {
                     quadtree.insert(point);
                 }
@@ -128,11 +141,23 @@ export default class Renderer {
         });
 
         // 3. Update physics and Draw
+        const toRemove = [];
         sortedNodes.forEach(node => {
-            if (node.size < 1) return;
+            if (node.size < 1 && !node.destroyed) return;
+
+            // Fade-in / Fade-out alpha (Cigar2 style)
+            if (node.destroyed) {
+                const alpha = Math.max(120 - (Date.now() - node.dead), 0) / 120;
+                if (alpha <= 0) {
+                    toRemove.push(node.id);
+                    return;
+                }
+                ctx.globalAlpha = alpha;
+            } else {
+                ctx.globalAlpha = Math.min(Date.now() - node.born, 120) / 120;
+            }
 
             if (useJelly) {
-                // Apply Doblesplit movePoints logic
                 this.game.movePoints(node, quadtree, b);
             }
 
@@ -162,7 +187,11 @@ export default class Renderer {
             if (node.jagged) ctx.stroke();
 
             this.drawText(ctx, node);
+            ctx.globalAlpha = 1;
         });
+
+        // Cleanup fully faded-out nodes
+        toRemove.forEach(id => this.game.nodes.delete(id));
     }
 
     drawText(ctx, node) {

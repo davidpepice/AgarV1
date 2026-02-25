@@ -64,11 +64,16 @@ export default class Connection {
                 case 0x10: // UPDATE_NODES
                     this.handleUpdateNodes(reader);
                     break;
-                case 0x11: // UPDATE_CAMERA
-                    this.game.renderer.camX = reader.readFloat32();
-                    this.game.renderer.camY = reader.readFloat32();
-                    this.game.renderer.targetScale = reader.readFloat32();
+                case 0x11: { // UPDATE_CAMERA (Cigar2 style)
+                    const renderer = this.game.renderer;
+                    renderer.target.x = reader.readFloat32();
+                    renderer.target.y = reader.readFloat32();
+                    renderer.target.scale = reader.readFloat32();
+                    renderer.target.scale *= renderer.viewportScale;
+                    renderer.target.scale *= renderer.userZoom;
+                    renderer.serverCamera = true;
                     break;
+                }
                 case 0x12: // CLEAR_ALL
                     this.game.clearAll();
                     break;
@@ -167,6 +172,17 @@ export default class Connection {
         const r = reader.readFloat64();
         const b = reader.readFloat64();
         this.game.borders = { l, t, r, b };
+
+        // Center camera on first border receipt (Cigar2 style)
+        if (!this.game.mapCenterSet) {
+            this.game.mapCenterSet = true;
+            const centerX = (l + r) / 2;
+            const centerY = (t + b) / 2;
+            const renderer = this.game.renderer;
+            renderer.camX = renderer.target.x = centerX;
+            renderer.camY = renderer.target.y = centerY;
+            renderer.scale = renderer.target.scale = 1;
+        }
     }
 
     onClose() {
