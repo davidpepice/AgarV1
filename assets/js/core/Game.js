@@ -29,6 +29,11 @@ class Game {
         this.clockOffset = 0;
         this.mapCenterSet = false;
 
+        this.lastTime = 0;
+        this.frameCount = 0;
+        this.fps = 0;
+        this.fpsLastUpdate = 0;
+
         this.ui = {
             mainMenu: document.getElementById('main-menu'),
             nickname: document.getElementById('nickname'),
@@ -39,6 +44,7 @@ class Game {
             stats: document.getElementById('stats'),
             lbList: document.getElementById('lb-list'),
             mass: document.getElementById('mass'),
+            fps: document.getElementById('fps'),
             showNames: document.getElementById('show-names'),
             showMass: document.getElementById('show-mass'),
             jellyPhysics: document.getElementById('jelly-physics'),
@@ -49,7 +55,7 @@ class Game {
         this.config = {
             showNames: true,
             showMass: true,
-            jellyPhysics: true,
+            jellyPhysics: false,
             animationDelay: 120
         };
 
@@ -239,7 +245,7 @@ class Game {
     }
 
     movePoints(node, quadtree, border) {
-        const pointsVel = node.pointsVel.slice();
+       /* const pointsVel = node.pointsVel.slice();
         const numPoints = node.points.length;
 
         for (let i = 0; i < numPoints; ++i) {
@@ -295,7 +301,7 @@ class Game {
             }
             curP.x = node.x + Math.cos(angle) * rl;
             curP.y = node.y + Math.sin(angle) * rl;
-        }
+        }*/
     }
 
     updateNode(id, x, y, size, color, name, jagged) {
@@ -313,7 +319,7 @@ class Game {
                 points: [],
                 pointsVel: []
             };
-            this.updateNumPoints(node);
+            //this.updateNumPoints(node);
             this.nodes.set(id, node);
         } else {
             node.startX = node.x; // Current interpolated position becomes the new start
@@ -344,6 +350,24 @@ class Game {
     }
 
     loop(time) {
+        if (!this.lastTime) {
+            this.lastTime = time;
+            this.fpsLastUpdate = time;
+        }
+
+        const delta = time - this.lastTime;
+        this.lastTime = delta;
+
+        // Contador de frames
+        this.frameCount++;
+
+        // Actualizar FPS cada 500ms (más estable)
+        if (time - this.fpsLastUpdate >= 500) {
+            this.fps = Math.round((this.frameCount * 1000) / (time - this.fpsLastUpdate));
+            this.frameCount = 0;
+            this.fpsLastUpdate = time;
+            this.ui.fps.innerText = `FPS: ${this.fps}`;
+        }
         this.renderer.render();
         if (this.nodes.size > 0) {
             let totalMass = 0;
@@ -359,5 +383,6 @@ class Game {
         }
         requestAnimationFrame((t) => this.loop(t));
     }
+     
 }
 window.game = new Game();

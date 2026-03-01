@@ -140,7 +140,7 @@ export default class Connection {
             let skin = flags.updSkin ? reader.readStringUTF8() : null;
             let name = flags.updName ? reader.readStringUTF8() : null;
 
-            this.game.updateNode(id, x, y, size, color, name, flags.jagged);
+            this.game.updateNode(id, x, y, size, color, name, flags.jagged, flags.ejected);
         }
 
         // 3. Disappear records
@@ -174,7 +174,7 @@ export default class Connection {
         this.game.borders = { l, t, r, b };
 
         // Center camera on first border receipt (Cigar2 style)
-        if (!this.game.mapCenterSet) {
+       /* if (!this.game.mapCenterSet) {
             this.game.mapCenterSet = true;
             const centerX = (l + r) / 2;
             const centerY = (t + b) / 2;
@@ -182,7 +182,7 @@ export default class Connection {
             renderer.camX = renderer.target.x = centerX;
             renderer.camY = renderer.target.y = centerY;
             renderer.scale = renderer.target.scale = 1;
-        }
+        }*/
     }
 
     onClose() {
