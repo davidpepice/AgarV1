@@ -9,6 +9,7 @@ export default class Renderer {
         this.width = this.canvas.width;
         this.height = this.canvas.height;
         this.textCache = new Map();
+        this.skinCache = new Map();
         this.camX = 0;
         this.camY = 0;
         this.target = {
@@ -144,7 +145,7 @@ export default class Renderer {
         const toRemove = [];
         sortedNodes.forEach(node => {
             if (node.size < 1 && !node.destroyed) return;
- 
+
             // Fade-in / Fade-out alpha (Cigar2 style)
             if (node.destroyed) {
                 const alpha = Math.max(120 - (Date.now() - node.dead), 0) / 50;
@@ -155,7 +156,7 @@ export default class Renderer {
                 ctx.globalAlpha = alpha;
             } else {
                 ctx.globalAlpha = Math.min(Date.now() - node.born, 120) / 50;
-            } 
+            }
 
             if (useJelly) {
                 this.game.movePoints(node, quadtree, b);
@@ -181,47 +182,70 @@ export default class Renderer {
             } else {
                 ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
             }
+            // ===== SKIN LOGIC =====
 
+            const skinImage = this.getSkin(node.skin);
+
+            if (skinImage && skinImage.complete && skinImage.naturalWidth !== 0) {
+
+                ctx.save();
+                ctx.clip();
+
+                ctx.drawImage(
+                    skinImage,
+                    node.x - node.size,
+                    node.y - node.size,
+                    node.size * 2,
+                    node.size * 2
+                );
+
+                ctx.restore();
+
+            } else {
+
+                ctx.fillStyle = node.color || '#00ff22';
+                ctx.fill();
+            }
             ctx.closePath();
-            ctx.fill();
+            //ctx.fill();
             if (node.jagged) ctx.stroke();
 
             //this.drawText(ctx, node);
             if (node.size > 20 && !node.jagged && !node.ejected) {
 
-    const showName = this.game.config.showNames && node.name;
-    const showMass = this.game.config.showMass;
+                const showName = this.game.config.showNames && node.name;
+                const showMass = this.game.config.showMass;
 
-    // ===== NOMBRE =====
-    if (showName) {
-        const fontSize = node.size * 0.35;
-        const texture = this.getTextTexture(node.name, fontSize, false);
+                // ===== NOMBRE =====
+                if (showName) {
+                    const fontSize = node.size * 0.35;
+                    const texture = this.getTextTexture(node.name, fontSize, false);
 
-        const yOffset = showMass ? node.size * 0.15 : 0;
+                    const yOffset = showMass ? node.size * 0.15 : 0;
 
-        ctx.drawImage(
-            texture,
-            node.x - texture.width / 2,
-            node.y - yOffset - texture.height / 2
-        );
-    }
+                    ctx.drawImage(
+                        texture,
+                        node.x - texture.width / 2,
+                        node.y - yOffset - texture.height / 2
+                    );
+                }
 
-    // ===== MASA =====
-    if (showMass) {
-        const mass = Math.floor((node.size * node.size) / 100);
-        const fontSize = node.size * 0.25;
+                // ===== MASA =====
+                if (showMass) {
+                    const mass = Math.floor((node.size * node.size) / 100);
+                    const fontSize = node.size * 0.25;
 
-        const texture = this.getTextTexture(mass.toString(), fontSize, true);
+                    const texture = this.getTextTexture(mass.toString(), fontSize, true);
 
-        const yOffset = showName ? node.size * 0.25 : 0;
+                    const yOffset = showName ? node.size * 0.25 : 0;
 
-        ctx.drawImage(
-            texture,
-            node.x - texture.width / 2,
-            node.y + yOffset - texture.height / 2
-        );
-    }
-}  
+                    ctx.drawImage(
+                        texture,
+                        node.x - texture.width / 2,
+                        node.y + yOffset - texture.height / 2
+                    );
+                }
+            }
             ctx.globalAlpha = 1;
         });
 
@@ -256,41 +280,65 @@ export default class Renderer {
             }
         }
     }*/
-   getTextTexture(text, fontSize, isMass = false) {
+    getTextTexture(text, fontSize, isMass = false) {
 
-    const sizeStep = 8; // evita infinitas variaciones
-    fontSize = Math.max(10, Math.floor(fontSize / sizeStep) * sizeStep);
+        const sizeStep = 8; // evita infinitas variaciones
+        fontSize = Math.max(10, Math.floor(fontSize / sizeStep) * sizeStep);
 
-    const key = `${text}_${fontSize}_${isMass}`;
+        const key = `${text}_${fontSize}_${isMass}`;
 
-    if (this.textCache.has(key)) {
-        return this.textCache.get(key);
+        if (this.textCache.has(key)) {
+            return this.textCache.get(key);
+        }
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+
+        const font = `bold ${fontSize}px Inter`;
+        ctx.font = font;
+
+        const metrics = ctx.measureText(text);
+        const padding = fontSize * 0.4;
+
+        canvas.width = Math.ceil(metrics.width + padding);
+        canvas.height = Math.ceil(fontSize + padding);
+
+        ctx.font = font;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.lineWidth = Math.max(2, fontSize * 0.08);
+        ctx.strokeStyle = '#000';
+        ctx.fillStyle = '#fff';
+
+        ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+        ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+        this.textCache.set(key, canvas);
+
+        return canvas;
     }
+    getSkin(name) {
 
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+        if (!name) return null;
+        name = name.toLowerCase().trim();
+        if (this.skinCache.has(name)) {
+            return this.skinCache.get(name);
+        }
 
-    const font = `bold ${fontSize}px Inter`;
-    ctx.font = font;
+        const img = new Image();
+        img.onload = () => {
+            img.loaded = true;
+        };
 
-    const metrics = ctx.measureText(text);
-    const padding = fontSize * 0.4;
+        img.onerror = () => {
+            console.warn("Skin not found:", name);
+            img.src = "assets/res/noSkin.png"; // imagen por defecto para skins no encontrados
+            img.loaded = false;
+        };
+        img.src = `./skins/${name}.png`; // carpeta skins
 
-    canvas.width = Math.ceil(metrics.width + padding);
-    canvas.height = Math.ceil(fontSize + padding);
+        this.skinCache.set(name, img);
 
-    ctx.font = font;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.lineWidth = Math.max(2, fontSize * 0.08);
-    ctx.strokeStyle = '#000';
-    ctx.fillStyle = '#fff';
-
-    ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-
-    this.textCache.set(key, canvas);
-
-    return canvas;
-}
+        return img;
+    }
 }

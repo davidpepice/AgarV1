@@ -245,71 +245,72 @@ class Game {
     }
 
     movePoints(node, quadtree, border) {
-       /* const pointsVel = node.pointsVel.slice();
-        const numPoints = node.points.length;
-
-        for (let i = 0; i < numPoints; ++i) {
-            const prevVel = pointsVel[(i - 1 + numPoints) % numPoints];
-            const nextVel = pointsVel[(i + 1) % numPoints];
-            const newVel = Math.max(
-                Math.min((node.pointsVel[i] + Math.random() - 0.5) * 0.7, 10),
-                -10
-            );
-            node.pointsVel[i] = (prevVel + nextVel + 8 * newVel) / 10;
-        }
-
-        for (let i = 0; i < numPoints; ++i) {
-            const curP = node.points[i];
-            const prevRl = node.points[(i - 1 + numPoints) % numPoints].rl;
-            const nextRl = node.points[(i + 1) % numPoints].rl;
-            let curRl = curP.rl;
-
-            // Collision detection using Quadtree
-            let affected = quadtree.some({
-                x: curP.x - 5,
-                y: curP.y - 5,
-                w: 10,
-                h: 10
-            }, (item) => {
-                if (item.parent === node) return false;
-                const dx = item.x - curP.x;
-                const dy = item.y - curP.y;
-                return (dx * dx + dy * dy) <= 25;
-            });
-
-            if (node.size < 10) {
-                // Simplified for small cells
-            }
-
-            if (!affected && (curP.x < border.l || curP.y < border.t || curP.x > border.r || curP.y > border.b)) {
-                affected = true;
-            }
-
-            if (affected) {
-                node.pointsVel[i] = Math.min(node.pointsVel[i], 0) - 1;
-            }
-
-            curRl += node.pointsVel[i];
-            curRl = Math.max(curRl, 0);
-            curRl = (9 * curRl + node.size) / 10;
-            curP.rl = (prevRl + nextRl + 8 * curRl) / 10;
-
-            const angle = (2 * Math.PI * i) / numPoints;
-            let rl = curP.rl;
-            if (node.jagged && i % 2 === 0) {
-                rl += 5;
-            }
-            curP.x = node.x + Math.cos(angle) * rl;
-            curP.y = node.y + Math.sin(angle) * rl;
-        }*/
+       const pointsVel = node.pointsVel.slice();
+         const numPoints = node.points.length;
+ 
+         for (let i = 0; i < numPoints; ++i) {
+             const prevVel = pointsVel[(i - 1 + numPoints) % numPoints];
+             const nextVel = pointsVel[(i + 1) % numPoints];
+             const newVel = Math.max(
+                 Math.min((node.pointsVel[i] + Math.random() - 0.5) * 0.7, 10),
+                 -10
+             );
+             node.pointsVel[i] = (prevVel + nextVel + 8 * newVel) / 10;
+         }
+ 
+         for (let i = 0; i < numPoints; ++i) {
+             const curP = node.points[i];
+             const prevRl = node.points[(i - 1 + numPoints) % numPoints].rl;
+             const nextRl = node.points[(i + 1) % numPoints].rl;
+             let curRl = curP.rl;
+ 
+             // Collision detection using Quadtree
+             let affected = quadtree.some({
+                 x: curP.x - 5,
+                 y: curP.y - 5,
+                 w: 10,
+                 h: 10
+             }, (item) => {
+                 if (item.parent === node) return false;
+                 const dx = item.x - curP.x;
+                 const dy = item.y - curP.y;
+                 return (dx * dx + dy * dy) <= 25;
+             });
+ 
+             if (node.size < 50) {
+                 // Simplified for small cells
+                    
+             }
+ 
+             if (!affected && (curP.x < border.l || curP.y < border.t || curP.x > border.r || curP.y > border.b)) {
+                 affected = true;
+             }
+ 
+             if (affected) {
+                 node.pointsVel[i] = Math.min(node.pointsVel[i], 0) - 1;
+             }
+ 
+             curRl += node.pointsVel[i];
+             curRl = Math.max(curRl, 0);
+             curRl = (9 * curRl + node.size) / 10;
+             curP.rl = (prevRl + nextRl + 8 * curRl) / 10;
+ 
+             const angle = (2 * Math.PI * i) / numPoints;
+             let rl = curP.rl;
+             if (node.jagged && i % 2 === 0) {
+                 rl += 5;
+             }
+             curP.x = node.x + Math.cos(angle) * rl;
+             curP.y = node.y + Math.sin(angle) * rl;
+         } 
     }
 
-    updateNode(id, x, y, size, color, name, jagged) {
+    updateNode(id, x, y, size, color, name, skin, jagged, ejected) {
         let node = this.nodes.get(id);
         const now = this.getSyncedTime();
         if (!node) {
             node = {
-                id, x, y, size, color, name, jagged,
+                id, x, y, size, color, name, skin, jagged, ejected,
                 targetX: x, targetY: y, targetSize: size,
                 startX: x, startY: y, startSize: size,
                 lastUpdate: now,
@@ -319,7 +320,7 @@ class Game {
                 points: [],
                 pointsVel: []
             };
-            //this.updateNumPoints(node);
+            this.updateNumPoints(node);
             this.nodes.set(id, node);
         } else {
             node.startX = node.x; // Current interpolated position becomes the new start
@@ -329,9 +330,11 @@ class Game {
             node.targetY = y;
             node.targetSize = size;
             node.lastUpdate = now;
-            if (color) node.color = color;
-            if (name) node.name = name;
+            if (color !== null) node.color = color;
+            if (name !== null) node.name = name;
+            if (skin !== null) node.skin = skin;
             if (jagged !== undefined) node.jagged = jagged;
+            if (ejected !== undefined) node.ejected = ejected;
         }
     }
 
@@ -362,7 +365,7 @@ class Game {
         this.frameCount++;
 
         // Actualizar FPS cada 500ms (más estable)
-        if (time - this.fpsLastUpdate >= 500) {
+        if (time - this.fpsLastUpdate >= 100) {
             this.fps = Math.round((this.frameCount * 1000) / (time - this.fpsLastUpdate));
             this.frameCount = 0;
             this.fpsLastUpdate = time;
@@ -383,6 +386,6 @@ class Game {
         }
         requestAnimationFrame((t) => this.loop(t));
     }
-     
+
 }
 window.game = new Game();

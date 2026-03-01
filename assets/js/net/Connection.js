@@ -140,7 +140,8 @@ export default class Connection {
             let skin = flags.updSkin ? reader.readStringUTF8() : null;
             let name = flags.updName ? reader.readStringUTF8() : null;
 
-            this.game.updateNode(id, x, y, size, color, name, flags.jagged, flags.ejected);
+            this.game.updateNode(id, x, y, size, color, name, skin, flags.jagged, flags.ejected);
+            
         }
 
         // 3. Disappear records
