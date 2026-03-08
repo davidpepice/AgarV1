@@ -1,5 +1,3 @@
-import PointQuadTree from '../utils/Quadtree.js';
-import { QUADTREE_MAX_POINTS } from '../core/Game.js';
 
 export default class Renderer {
     constructor(game) {
@@ -21,7 +19,7 @@ export default class Renderer {
         this.userZoom = 1;
         this.viewportScale = 1;
         this.serverCamera = true; // true when server sends 0x11
-        this.gridSize = 0;
+        this.gridSize = 40;
     }
 
     setSize(w, h) {
@@ -123,134 +121,95 @@ export default class Renderer {
 
     drawNodes(ctx) {
         const sortedNodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
-        const useJelly = this.game.config.jellyPhysics;
 
-        // 1. Rebuild Quadtree for point-based collisions (Jelly Physics)
-        const b = this.game.borders || { l: -10000, t: -10000, r: 10000, b: 10000 };
-        const quadtree = new PointQuadTree(b.l, b.t, b.r - b.l, b.b - b.t, QUADTREE_MAX_POINTS);
+        // 1. Calculate Viewport Bounds with Margin (prevents flickering at edges)
+        const margin = 100;
+        const halfW = (this.width / 2) / this.scale;
+        const halfH = (this.height / 2) / this.scale;
+        const viewL = this.camX - halfW - margin;
+        const viewR = this.camX + halfW + margin;
+        const viewT = this.camY - halfH - margin;
+        const viewB = this.camY + halfH + margin;
 
-        // 2. Update jelly points and insert into quadtree
-        sortedNodes.forEach(node => {
-            if (node.size < 1) return;
-
-            if (useJelly) {
-                this.game.updateNumPoints(node);
-                for (const point of node.points) {
-                    quadtree.insert(point);
-                }
-            }
-        });
-
-        // 3. Update physics and Draw
         const toRemove = [];
-        sortedNodes.forEach(node => {
-            if (node.size < 1 && !node.destroyed) return;
+        const noSkins = this.game.config.noSkins;
+        const now = Date.now();
 
-            // Fade-in / Fade-out alpha (Cigar2 style)
+        for (let i = 0; i < sortedNodes.length; i++) {
+            const node = sortedNodes[i];
+
+            // Viewport Culling
+            if (node.x + node.size < viewL || node.x - node.size > viewR ||
+                node.y + node.size < viewT || node.y - node.size > viewB) {
+                continue;
+            }
+
+            if (node.size < 1 && !node.destroyed) continue;
+
+            // Transparency Logic
             if (node.destroyed) {
-                const alpha = Math.max(120 - (Date.now() - node.dead), 0) / 50;
+                const alpha = Math.max(120 - (now - node.dead), 0) / 100;
                 if (alpha <= 0) {
                     toRemove.push(node.id);
-                    return;
+                    continue;
                 }
-                ctx.globalAlpha = alpha;
+                ctx.globalAlpha = Math.min(alpha, 1);
             } else {
-                ctx.globalAlpha = Math.min(Date.now() - node.born, 120) / 50;
-            }
-
-            if (useJelly) {
-                this.game.movePoints(node, quadtree, b);
+                // Quick fade-in to prevent flickering perception
+                const bornDiff = now - node.born;
+                ctx.globalAlpha = bornDiff < 100 ? bornDiff / 100 : 1;
             }
 
             ctx.fillStyle = node.color || '#00ff22';
             ctx.strokeStyle = node.color || '#00ff22';
-            ctx.lineWidth = node.jagged ? 10 : 0;
-            if (node.jagged) ctx.lineJoin = "miter";
 
+            // Draw Body
             ctx.beginPath();
+            ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
 
-            const numPoints = node.points.length;
-            if (useJelly && numPoints > 0) {
-                const points = node.points;
-                let p0 = points[0];
-                if (p0) {
-                    ctx.moveTo(p0.x, p0.y);
-                    for (let i = 1; i < numPoints; i++) {
-                        ctx.lineTo(points[i].x, points[i].y);
-                    }
-                }
-            } else {
-                ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
-            }
-            // ===== SKIN LOGIC =====
-
-            const skinImage = this.getSkin(node.skin);
-
+            const skinImage = noSkins ? null : this.getSkin(node.skin);
             if (skinImage && skinImage.complete && skinImage.naturalWidth !== 0) {
-
                 ctx.save();
                 ctx.clip();
-
-                ctx.drawImage(
-                    skinImage,
-                    node.x - node.size,
-                    node.y - node.size,
-                    node.size * 2,
-                    node.size * 2
-                );
-
+                ctx.drawImage(skinImage, node.x - node.size, node.y - node.size, node.size * 2, node.size * 2);
                 ctx.restore();
-
             } else {
-
-                ctx.fillStyle = node.color || '#00ff22';
                 ctx.fill();
             }
-            ctx.closePath();
-            //ctx.fill();
-            if (node.jagged) ctx.stroke();
 
-            //this.drawText(ctx, node);
+            // Draw Virus Stroke
+            if (node.jagged) {
+                ctx.lineWidth = 10;
+                ctx.lineJoin = "miter";
+                ctx.stroke();
+            }
+
+            // Draw Text (Names/Mass)
             if (node.size > 20 && !node.jagged && !node.ejected) {
-
                 const showName = this.game.config.showNames && node.name;
                 const showMass = this.game.config.showMass;
 
-                // ===== NOMBRE =====
                 if (showName) {
-                    const fontSize = node.size * 0.35;
-                    const texture = this.getTextTexture(node.name, fontSize, false);
-
-                    const yOffset = showMass ? node.size * 0.15 : 0;
-
-                    ctx.drawImage(
-                        texture,
-                        node.x - texture.width / 2,
-                        node.y - yOffset - texture.height / 2
-                    );
+                    const texture = this.getTextTexture(node.name);
+                    const targetW = node.size * 1.5;
+                    const targetH = targetW * (texture.height / texture.width);
+                    const yOffset = showMass ? node.size * 0.2 : 0;
+                    ctx.drawImage(texture, node.x - targetW / 2, node.y - yOffset - targetH / 2, targetW, targetH);
                 }
 
-                // ===== MASA =====
                 if (showMass) {
                     const mass = Math.floor((node.size * node.size) / 100);
-                    const fontSize = node.size * 0.25;
-
-                    const texture = this.getTextTexture(mass.toString(), fontSize, true);
-
-                    const yOffset = showName ? node.size * 0.25 : 0;
-
-                    ctx.drawImage(
-                        texture,
-                        node.x - texture.width / 2,
-                        node.y + yOffset - texture.height / 2
-                    );
+                    const texture = this.getTextTexture(mass.toString());
+                    const targetW = node.size * 0.8;
+                    const targetH = targetW * (texture.height / texture.width);
+                    const yOffset = showName ? node.size * 0.35 : 0;
+                    ctx.drawImage(texture, node.x - targetW / 2, node.y + yOffset - targetH / 2, targetW, targetH);
                 }
             }
-            ctx.globalAlpha = 1;
-        });
+        }
+        ctx.globalAlpha = 1;
 
-        // Cleanup fully faded-out nodes
-        toRemove.forEach(id => this.game.nodes.delete(id));
+        for (let i = 0; i < toRemove.length; i++) this.game.nodes.delete(toRemove[i]);
     }
 
     /*drawText(ctx, node) {
@@ -280,33 +239,27 @@ export default class Renderer {
             }
         }
     }*/
-    getTextTexture(text, fontSize, isMass = false) {
-
-        const sizeStep = 8; // evita infinitas variaciones
-        fontSize = Math.max(10, Math.floor(fontSize / sizeStep) * sizeStep);
-
-        const key = `${text}_${fontSize}_${isMass}`;
-
-        if (this.textCache.has(key)) {
-            return this.textCache.get(key);
-        }
+    getTextTexture(text) {
+        const key = `${text}`;
+        if (this.textCache.has(key)) return this.textCache.get(key);
 
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
+        const baseSize = 120; // Fixed high-res size for the texture
 
-        const font = `bold ${fontSize}px Inter`;
+        const font = `bold ${baseSize}px Inter`;
         ctx.font = font;
 
         const metrics = ctx.measureText(text);
-        const padding = fontSize * 0.4;
+        const padding = baseSize * 0.2;
 
         canvas.width = Math.ceil(metrics.width + padding);
-        canvas.height = Math.ceil(fontSize + padding);
+        canvas.height = Math.ceil(baseSize + padding);
 
         ctx.font = font;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.lineWidth = Math.max(2, fontSize * 0.08);
+        ctx.lineWidth = baseSize * 0.2;
         ctx.strokeStyle = '#000';
         ctx.fillStyle = '#fff';
 
@@ -314,7 +267,6 @@ export default class Renderer {
         ctx.fillText(text, canvas.width / 2, canvas.height / 2);
 
         this.textCache.set(key, canvas);
-
         return canvas;
     }
     getSkin(name) {

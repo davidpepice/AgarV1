@@ -1,12 +1,6 @@
 import Connection from '../net/Connection.js';
 import Renderer from '../render/Renderer.js';
 import { BinaryWriter, PROTOCOL } from '../net/Protocol.js';
-import PointQuadTree from '../utils/Quadtree.js';
-
-export const CELL_POINTS_MIN = 5;
-export const CELL_POINTS_MAX = 200;
-export const VIRUS_POINTS = 100;
-export const QUADTREE_MAX_POINTS = 302;
 
 class Game {
     constructor() {
@@ -47,19 +41,83 @@ class Game {
             fps: document.getElementById('fps'),
             showNames: document.getElementById('show-names'),
             showMass: document.getElementById('show-mass'),
-            jellyPhysics: document.getElementById('jelly-physics'),
+            noSkins: document.getElementById('no-skins'),
             animDelay: document.getElementById('anim-delay'),
-            animDelayValue: document.getElementById('anim-delay-value')
+            animDelayValue: document.getElementById('anim-delay-value'),
+            hotkeyBtns: document.querySelectorAll('.key-btn'),
+            tabs: document.querySelectorAll('.tab-btn'),
+            tabContents: document.querySelectorAll('.tab-content')
         };
 
         this.config = {
             showNames: true,
             showMass: true,
-            jellyPhysics: false,
-            animationDelay: 120
+            noSkins: false,
+            animationDelay: 120,
+            hotkeys: {
+                split: 'Space',
+                feed: 'KeyW',
+                double: 'KeyQ',
+                triple: 'KeyE',
+                quad: 'KeyC',
+                macro: 'KeyZ',
+                botSplit: 'KeyR',
+                botFeed: 'KeyT',
+                freeze: 'KeyF'
+            }
         };
 
+        this.macroInterval = null;
+        this.bindingKey = null; // Element currently being rebound
+        this.heldKeys = new Set();
+        this.isFrozen = false;
+
+        this.loadSettings();
         this.init();
+    }
+
+    loadSettings() {
+        try {
+            const saved = localStorage.getItem('agarv1_settings');
+            if (saved) {
+                const settings = JSON.parse(saved);
+                if (settings.nickname) this.ui.nickname.value = settings.nickname;
+                if (settings.serverUrl) this.ui.serverUrl.value = settings.serverUrl;
+                if (settings.config) {
+                    this.config = { ...this.config, ...settings.config };
+                    this.ui.showNames.checked = this.config.showNames;
+                    this.ui.showMass.checked = this.config.showMass;
+                    this.ui.noSkins.checked = this.config.noSkins || false;
+                    this.ui.animDelay.value = this.config.animationDelay;
+                    this.ui.animDelayValue.textContent = this.config.animationDelay;
+
+                    // Update Hotkey Buttons
+                    if (this.config.hotkeys) {
+                        this.ui.hotkeyBtns.forEach(btn => {
+                            const action = btn.dataset.action;
+                            if (this.config.hotkeys[action]) {
+                                btn.textContent = this.config.hotkeys[action].replace('Key', '').replace('Digit', '');
+                            }
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Failed to load settings:", e);
+        }
+    }
+
+    saveSettings() {
+        try {
+            const settings = {
+                nickname: this.ui.nickname.value,
+                serverUrl: this.ui.serverUrl.value,
+                config: this.config
+            };
+            localStorage.setItem('agarv1_settings', JSON.stringify(settings));
+        } catch (e) {
+            console.error("Failed to save settings:", e);
+        }
     }
 
     init() {
@@ -69,16 +127,46 @@ class Game {
         this.ui.spectateBtn.addEventListener('click', () => this.handleSpectate());
 
         // Config Bindings
-        this.ui.showNames.addEventListener('change', (e) => this.config.showNames = e.target.checked);
-        this.ui.showMass.addEventListener('change', (e) => this.config.showMass = e.target.checked);
-        this.ui.jellyPhysics.addEventListener('change', (e) => this.config.jellyPhysics = e.target.checked);
+        this.ui.showNames.addEventListener('change', (e) => {
+            this.config.showNames = e.target.checked;
+            this.saveSettings();
+        });
+        this.ui.showMass.addEventListener('change', (e) => {
+            this.config.showMass = e.target.checked;
+            this.saveSettings();
+        });
+        this.ui.noSkins.addEventListener('change', (e) => {
+            this.config.noSkins = e.target.checked;
+            this.saveSettings();
+        });
         this.ui.animDelay.addEventListener('input', (e) => {
             this.config.animationDelay = parseInt(e.target.value);
             this.ui.animDelayValue.textContent = e.target.value;
+            this.saveSettings();
+        });
+
+        // Hotkey Bindings
+        this.ui.hotkeyBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                if (this.bindingKey) this.bindingKey.classList.remove('waiting');
+                this.bindingKey = btn;
+                btn.classList.add('waiting');
+                btn.textContent = '...';
+            });
+        });
+
+        // Tab Switching
+        this.ui.tabs.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tabId = btn.dataset.tab;
+                this.ui.tabs.forEach(b => b.classList.toggle('active', b === btn));
+                this.ui.tabContents.forEach(c => c.classList.toggle('active', c.id === tabId));
+            });
         });
 
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
         window.addEventListener('wheel', (e) => this.handleWheel(e), { passive: true });
         requestAnimationFrame((t) => this.loop(t));
     }
@@ -117,6 +205,7 @@ class Game {
         this.ui.stats.style.display = 'block';
 
         this.reset();
+        this.saveSettings();
         this.connection.connect(url, this.nickname);
     }
     handleSpectate() {
@@ -181,21 +270,85 @@ class Game {
     }
 
     handleKeyDown(e) {
+        if (this.bindingKey) {
+            const action = this.bindingKey.dataset.action;
+            this.config.hotkeys[action] = e.code;
+            this.bindingKey.textContent = e.code.replace('Key', '').replace('Digit', '');
+            this.bindingKey.classList.remove('waiting');
+            this.bindingKey = null;
+            this.saveSettings();
+            return;
+        }
+
+        if (this.heldKeys.has(e.code)) return;
+        this.heldKeys.add(e.code);
+
         if (e.code === 'Escape') {
             const isHidden = this.ui.mainMenu.style.display === 'none';
             this.ui.mainMenu.style.display = isHidden ? 'flex' : 'none';
             return;
         }
 
-        const OPCODES = { 'Space': 17, 'KeyQ': 18, 'KeyW': 21, 'KeyE': 22, 'KeyR': 23 };
-        if (OPCODES[e.code]) this.connection.send(new Uint8Array([OPCODES[e.code]]));
+        // Action Mapping
+        const h = this.config.hotkeys;
+        if (e.code === h.split) {
+            this.connection.send(new Uint8Array([17]));
+        } else if (e.code === h.feed) {
+            this.connection.send(new Uint8Array([21]));
+        } else if (e.code === h.double) {
+            this.executeMultiSplit(2);
+        } else if (e.code === h.triple) {
+            this.executeMultiSplit(4);
+        } else if (e.code === h.quad) {
+            this.executeMultiSplit(16);
+        } else if (e.code === h.macro) {
+            this.startMacroFeed();
+        } else if (e.code === h.botSplit) {
+            this.connection.send(new Uint8Array([22]));
+        } else if (e.code === h.botFeed) {
+            this.connection.send(new Uint8Array([23]));
+        } else if (e.code === h.freeze) {
+            this.isFrozen = !this.isFrozen;
+        }
+    }
+
+    handleKeyUp(e) {
+        this.heldKeys.delete(e.code);
+        if (e.code === this.config.hotkeys.macro) {
+            this.stopMacroFeed();
+        }
+    }
+
+    executeMultiSplit(times) {
+        let count = 0;
+        const interval = setInterval(() => {
+            this.connection.send(new Uint8Array([17]));
+            count++;
+            if (count >= times) clearInterval(interval);
+        }, 40);
+    }
+
+    startMacroFeed() {
+        if (this.macroInterval) return;
+        this.macroInterval = setInterval(() => {
+            this.connection.send(new Uint8Array([21]));
+        }, 40);
+    }
+
+    stopMacroFeed() {
+        if (this.macroInterval) {
+            clearInterval(this.macroInterval);
+            this.macroInterval = null;
+        }
     }
 
     sendMouse() {
         if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) return;
-        const scale = this.renderer.scale;
-        const worldX = (this.mouseX - this.canvas.width / 2) / scale + this.renderer.camX;
-        const worldY = (this.mouseY - this.canvas.height / 2) / scale + this.renderer.camY;
+        if (this.isFrozen) return;
+        const renderer = this.renderer;
+        const scale = renderer.scale;
+        const worldX = (this.mouseX - this.canvas.width / 2) / scale + renderer.camX;
+        const worldY = (this.mouseY - this.canvas.height / 2) / scale + renderer.camY;
 
         const writer = new BinaryWriter();
         writer.writeUInt8(0x10); // Mouse move
@@ -203,106 +356,6 @@ class Game {
         writer.writeUInt32(Math.floor(worldY));
         writer.writeUInt32(0); // Zero/Key
         this.connection.send(writer.build());
-    }
-
-    updateNumPoints(node) {
-        // We use a simplified version of the logic based on Doblesplit
-        const scale = this.renderer ? this.renderer.scale : 1;
-        let numPoints = Math.min(
-            Math.max((node.size * scale) | 0, CELL_POINTS_MIN),
-            CELL_POINTS_MAX
-        );
-        if (node.jagged) numPoints = VIRUS_POINTS;
-
-        while (node.points.length > numPoints) {
-            const i = (Math.random() * node.points.length) | 0;
-            node.points.splice(i, 1);
-            node.pointsVel.splice(i, 1);
-        }
-
-        if (node.points.length === 0 && numPoints !== 0) {
-            node.points.push({
-                x: node.x,
-                y: node.y,
-                rl: node.size,
-                parent: node
-            });
-            node.pointsVel.push(Math.random() - 0.5);
-        }
-
-        while (node.points.length < numPoints) {
-            const i = (Math.random() * node.points.length) | 0;
-            const point = node.points[i];
-            const vel = node.pointsVel[i];
-            node.points.splice(i, 0, {
-                x: point.x,
-                y: point.y,
-                rl: point.rl,
-                parent: node
-            });
-            node.pointsVel.splice(i, 0, vel);
-        }
-    }
-
-    movePoints(node, quadtree, border) {
-       const pointsVel = node.pointsVel.slice();
-         const numPoints = node.points.length;
- 
-         for (let i = 0; i < numPoints; ++i) {
-             const prevVel = pointsVel[(i - 1 + numPoints) % numPoints];
-             const nextVel = pointsVel[(i + 1) % numPoints];
-             const newVel = Math.max(
-                 Math.min((node.pointsVel[i] + Math.random() - 0.5) * 0.7, 10),
-                 -10
-             );
-             node.pointsVel[i] = (prevVel + nextVel + 8 * newVel) / 10;
-         }
- 
-         for (let i = 0; i < numPoints; ++i) {
-             const curP = node.points[i];
-             const prevRl = node.points[(i - 1 + numPoints) % numPoints].rl;
-             const nextRl = node.points[(i + 1) % numPoints].rl;
-             let curRl = curP.rl;
- 
-             // Collision detection using Quadtree
-             let affected = quadtree.some({
-                 x: curP.x - 5,
-                 y: curP.y - 5,
-                 w: 10,
-                 h: 10
-             }, (item) => {
-                 if (item.parent === node) return false;
-                 const dx = item.x - curP.x;
-                 const dy = item.y - curP.y;
-                 return (dx * dx + dy * dy) <= 25;
-             });
- 
-             if (node.size < 50) {
-                 // Simplified for small cells
-                    
-             }
- 
-             if (!affected && (curP.x < border.l || curP.y < border.t || curP.x > border.r || curP.y > border.b)) {
-                 affected = true;
-             }
- 
-             if (affected) {
-                 node.pointsVel[i] = Math.min(node.pointsVel[i], 0) - 1;
-             }
- 
-             curRl += node.pointsVel[i];
-             curRl = Math.max(curRl, 0);
-             curRl = (9 * curRl + node.size) / 10;
-             curP.rl = (prevRl + nextRl + 8 * curRl) / 10;
- 
-             const angle = (2 * Math.PI * i) / numPoints;
-             let rl = curP.rl;
-             if (node.jagged && i % 2 === 0) {
-                 rl += 5;
-             }
-             curP.x = node.x + Math.cos(angle) * rl;
-             curP.y = node.y + Math.sin(angle) * rl;
-         } 
     }
 
     updateNode(id, x, y, size, color, name, skin, jagged, ejected) {
@@ -316,11 +369,8 @@ class Game {
                 lastUpdate: now,
                 born: Date.now(),
                 destroyed: false,
-                dead: 0,
-                points: [],
-                pointsVel: []
+                dead: 0
             };
-            this.updateNumPoints(node);
             this.nodes.set(id, node);
         } else {
             node.startX = node.x; // Current interpolated position becomes the new start
@@ -359,13 +409,13 @@ class Game {
         }
 
         const delta = time - this.lastTime;
-        this.lastTime = delta;
+        this.lastTime = time;
 
         // Contador de frames
         this.frameCount++;
 
         // Actualizar FPS cada 500ms (más estable)
-        if (time - this.fpsLastUpdate >= 100) {
+        if (time - this.fpsLastUpdate >= 500) {
             this.fps = Math.round((this.frameCount * 1000) / (time - this.fpsLastUpdate));
             this.frameCount = 0;
             this.fpsLastUpdate = time;
