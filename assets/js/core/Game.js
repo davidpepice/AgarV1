@@ -71,6 +71,7 @@ class Game {
         this.bindingKey = null; // Element currently being rebound
         this.heldKeys = new Set();
         this.isFrozen = false;
+        this.playing = false;
 
         this.loadSettings();
         this.init();
@@ -188,9 +189,8 @@ class Game {
 
         // If already connected to same server, just spawn or close menu
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
-            this.ui.mainMenu.style.display = 'none';
-            this.ui.leaderboard.style.display = 'block';
-            this.ui.stats.style.display = 'block';
+            this.hideMenu();
+            this.playing = true;
 
             if (nickname !== this.nickname || this.ownIds.length === 0) {
                 this.nickname = nickname;
@@ -200,9 +200,8 @@ class Game {
         }
 
         this.nickname = nickname;
-        this.ui.mainMenu.style.display = 'none';
-        this.ui.leaderboard.style.display = 'block';
-        this.ui.stats.style.display = 'block';
+        this.hideMenu();
+        this.playing = true;
 
         this.reset();
         this.saveSettings();
@@ -213,17 +212,13 @@ class Game {
         const url = this.ui.serverUrl.value || 'ws://localhost:8080';
 
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
-            this.ui.mainMenu.style.display = 'none';
-            this.ui.leaderboard.style.display = 'block';
-            this.ui.stats.style.display = 'block';
+            this.hideMenu();
             this.connection.spectate();
             return;
         }
 
         this.nickname = nickname;
-        this.ui.mainMenu.style.display = 'none';
-        this.ui.leaderboard.style.display = 'block';
-        this.ui.stats.style.display = 'block';
+        this.hideMenu();
 
         this.reset();
         this.connection.connect(url, this.nickname, true);
@@ -245,7 +240,20 @@ class Game {
     clearOwn() {
         this.ownIds.forEach(id => this.nodes.delete(id));
         this.ownIds = [];
+        this.showMenu();
+    }
+
+    showMenu() {
         this.ui.mainMenu.style.display = 'flex';
+        this.ui.leaderboard.style.display = 'none';
+        this.ui.stats.style.display = 'none';
+        this.playing = false;
+    }
+
+    hideMenu() {
+        this.ui.mainMenu.style.display = 'none';
+        this.ui.leaderboard.style.display = 'block';
+        this.ui.stats.style.display = 'block';
     }
 
     syncTime(serverTime) {
@@ -395,7 +403,14 @@ class Game {
             node.dead = Date.now();
         }
         const idx = this.ownIds.indexOf(id);
-        if (idx !== -1) this.ownIds.splice(idx, 1);
+        if (idx !== -1) {
+            this.ownIds.splice(idx, 1);
+            if (this.ownIds.length === 0 && this.playing) {
+                setTimeout(() => {
+                    if (this.ownIds.length === 0) this.showMenu();
+                }, 500); // Small delay to let the death animation play out
+            }
+        }
     }
 
     updateLeaderboard(list) {
