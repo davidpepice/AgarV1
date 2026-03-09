@@ -16,6 +16,7 @@
 
         <div class="menu-tabs">
             <button class="tab-btn active" data-tab="tab-play">Play</button>
+            <button class="tab-btn" data-tab="tab-shop">Shop</button>
             <button class="tab-btn" data-tab="tab-settings">Settings</button>
             <button class="tab-btn" data-tab="tab-hotkeys">Hotkeys</button>
         </div>
@@ -28,6 +29,33 @@
             <div class="button-group">
                 <button id="play-btn">Play</button>
                 <button id="spectate-btn">Spectate</button>
+            </div>
+        </div>
+
+        <div id="tab-shop" class="tab-content">
+            <div class="shop-header">
+                <span class="currency"><i class="icon-coin"></i> <span id="user-coins">0</span> Coins</span>
+            </div>
+            <div class="shop-container">
+                <div class="shop-sidebar">
+                    <button class="shop-cat-btn active" data-cat="level">Level</button>
+                    <button class="shop-cat-btn" data-cat="owner">Owner</button>
+                    <button class="shop-cat-btn" data-cat="premium">Premium</button>
+                    <button class="shop-cat-btn" data-cat="coins">Coins</button>
+                </div>
+                <div class="shop-main">
+                    <div id="shop-grid" class="shop-grid">
+                        <!-- Items will be injected here -->
+                    </div>
+                </div>
+                <div class="shop-preview">
+                    <h3>Preview</h3>
+                    <div id="skin-preview-container">
+                        <canvas id="skin-preview-canvas" width="200" height="200"></canvas>
+                        <div id="preview-name">Select a skin</div>
+                    </div>
+                    <button id="buy-select-btn" class="shop-action-btn" disabled>Select Skin</button>
+                </div>
             </div>
         </div>
 

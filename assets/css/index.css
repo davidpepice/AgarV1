@@ -163,15 +163,16 @@ button:active {
     padding: 0;
     overflow: hidden;
     animation: slideInRight 0.5s ease-out;
+    pointer-events: auto;
 }
 
 #leaderboard h3 {
-    padding: 1rem 1.2rem;
+    padding: 0.6rem 1rem;
     margin: 0;
-    font-size: 1rem;
+    font-size: 0.85rem;
     font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 1.5px;
+    letter-spacing: 1.2px;
     background: linear-gradient(to right, rgba(0, 210, 255, 0.2), transparent);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     color: var(--accent-color);
@@ -180,14 +181,14 @@ button:active {
 #lb-list {
     list-style: none;
     margin: 0;
-    padding: 0.5rem 0;
-    max-height: 400px;
+    padding: 0.2rem 0;
+    max-height: 450px;
     overflow-y: auto;
 }
 
 /* Custom Scrollbar */
 #lb-list::-webkit-scrollbar {
-    width: 4px;
+    width: 3px;
 }
 
 #lb-list::-webkit-scrollbar-track {
@@ -204,27 +205,33 @@ button:active {
 }
 
 #lb-list li {
-    padding: 0.6rem 1.2rem;
+    padding: 6px 12px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    transition: background 0.2s;
-    border-left: 2px solid transparent;
-    color: white;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    transition: all 0.2s;
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+#lb-list li:hover {
+    background: rgba(255, 255, 255, 0.08);
+    padding-left: 15px;
 }
 
 #lb-list li.me {
-    background: rgba(0, 210, 255, 0.15);
-    border-left: 2px solid var(--accent-color);
+    background: rgba(0, 210, 255, 0.1);
+    border-left: 3px solid var(--accent-color);
     color: var(--accent-color);
-    font-weight: 700;
+    font-weight: 600;
 }
 
 #lb-list li .rank {
     font-family: 'JetBrains Mono', monospace;
     opacity: 0.6;
-    min-width: 20px;
-    font-size: 0.85rem;
+    min-width: 18px;
+    font-size: 0.75rem;
+    margin-right: 8px;
 }
 
 #lb-list li .name {
@@ -444,4 +451,191 @@ input[type="range"]::-webkit-slider-thumb:hover {
     100% {
         opacity: 1;
     }
+}
+
+/* --- Shop System --- */
+.shop-header {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0 5px 15px 5px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.currency {
+    background: rgba(255, 215, 0, 0.1);
+    color: #ffd700;
+    padding: 6px 15px;
+    border-radius: 20px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid rgba(255, 215, 0, 0.2);
+}
+
+.shop-container {
+    display: grid;
+    grid-template-columns: 140px 1fr 220px;
+    gap: 20px;
+    height: 450px;
+    margin-top: 5px;
+}
+
+.shop-sidebar {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+    padding-right: 15px;
+}
+
+.shop-cat-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 10px;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+    text-align: left;
+    transition: all 0.2s;
+}
+
+.shop-cat-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+}
+
+.shop-cat-btn.active {
+    background: var(--accent-color);
+    color: white;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 15px rgba(0, 210, 255, 0.3);
+}
+
+.shop-main {
+    overflow-y: auto;
+    padding-right: 10px;
+}
+
+.shop-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 12px;
+}
+
+.shop-item {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.shop-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+    transform: translateY(-3px);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.shop-item.selected {
+    border-color: var(--accent-color);
+    background: rgba(0, 210, 255, 0.05);
+}
+
+.shop-item img {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    object-fit: cover;
+    background: #222;
+}
+
+.shop-item .item-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-align: center;
+}
+
+.shop-item .item-price {
+    font-size: 0.75rem;
+    color: #ffd700;
+    font-weight: 700;
+}
+
+.shop-preview {
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 15px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+#skin-preview-container {
+    text-align: center;
+}
+
+#skin-preview-canvas {
+    width: 150px;
+    height: 150px;
+    filter: drop-shadow(0 0 10px rgba(0, 210, 255, 0.2));
+}
+
+#preview-name {
+    margin-top: 10px;
+    font-weight: 700;
+    color: var(--text-color);
+}
+
+.shop-action-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 0.9rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.shop-action-btn:disabled {
+    background: #444;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+/* Ping / Stats refined */
+#stats {
+    display: flex;
+    gap: 20px;
+}
+
+#stats span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+}
+
+#ping {
+    color: #4cd137;
+}
+
+#ping.high {
+    color: #e84118;
+}
+
+#stats span::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 8px currentColor;
+    display: inline-block;
+    margin-right: 8px;
+    vertical-align: middle;
 }

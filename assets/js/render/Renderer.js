@@ -20,6 +20,9 @@ export default class Renderer {
         this.viewportScale = 1;
         this.serverCamera = true; // true when server sends 0x11
         this.gridSize = 40;
+        this.virusImage = new Image();
+        this.virusImage.src = 'assets/res/virus.png';
+        this.spectateTargetName = "";
     }
 
     setSize(w, h) {
@@ -58,6 +61,22 @@ export default class Renderer {
 
                 const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
                 this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+            } else if (this.spectateTargetName) {
+                // Manual spectate fallback: find nodes by name
+                const targetNodes = Array.from(this.game.nodes.values()).filter(n => n.name === this.spectateTargetName && !n.destroyed);
+                if (targetNodes.length > 0) {
+                    let avgX = 0, avgY = 0, sumSize = 0;
+                    targetNodes.forEach(node => {
+                        avgX += node.x;
+                        avgY += node.y;
+                        sumSize += node.size;
+                    });
+                    this.target.x = avgX / targetNodes.length;
+                    this.target.y = avgY / targetNodes.length;
+
+                    const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
+                    this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+                }
             }
         }
 
@@ -168,22 +187,35 @@ export default class Renderer {
             ctx.beginPath();
             ctx.arc(node.x, node.y, node.size, 0, Math.PI * 2);
 
-            const skinImage = noSkins ? null : this.getSkin(node.skin);
-            if (skinImage && skinImage.complete && skinImage.naturalWidth !== 0) {
-                ctx.save();
-                ctx.clip();
-                ctx.drawImage(skinImage, node.x - node.size, node.y - node.size, node.size * 2, node.size * 2);
-                ctx.restore();
+            if (node.jagged) {
+                if (this.virusImage.complete && this.virusImage.naturalWidth !== 0) {
+                    // Draw virus image with a slight scale to cover the body
+                    const virusSize = node.size * 1.05;
+                    ctx.drawImage(this.virusImage, node.x - virusSize, node.y - virusSize, virusSize * 2, virusSize * 2);
+                } else {
+                    ctx.fillStyle = '#33ff33';
+                    ctx.fill();
+                    ctx.lineWidth = node.size * 0.1;
+                    ctx.stroke();
+                }
             } else {
-                ctx.fill();
+                const skinImage = noSkins ? null : this.getSkin(node.skin);
+                if (skinImage && skinImage.complete && skinImage.naturalWidth !== 0) {
+                    ctx.save();
+                    ctx.clip();
+                    ctx.drawImage(skinImage, node.x - node.size, node.y - node.size, node.size * 2, node.size * 2);
+                    ctx.restore();
+                } else {
+                    ctx.fill();
+                }
             }
 
             // Draw Virus Stroke
-            if (node.jagged) {
+            /*if (node.jagged) {
                 ctx.lineWidth = 10;
                 ctx.lineJoin = "miter";
                 ctx.stroke();
-            }
+            }*/
 
             // Draw Text (Names/Mass)
             if (node.size > 20 && !node.jagged && !node.ejected) {
@@ -191,7 +223,8 @@ export default class Renderer {
                 const showMass = this.game.config.showMass;
 
                 if (showName) {
-                    const texture = this.getTextTexture(node.name);
+                    const cleanName = this.game.constructor.parseName(node.name);
+                    const texture = this.getTextTexture(cleanName);
                     const targetW = node.size * 1.5;
                     const targetH = targetW * (texture.height / texture.width);
                     const yOffset = showMass ? node.size * 0.2 : 0;

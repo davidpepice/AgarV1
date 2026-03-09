@@ -45,6 +45,13 @@ class Game {
             animDelay: document.getElementById('anim-delay'),
             animDelayValue: document.getElementById('anim-delay-value'),
             darkTheme: document.getElementById('dark-theme'),
+            userCoins: document.getElementById('user-coins'),
+            shopGrid: document.getElementById('shop-grid'),
+            shopCatBtns: document.querySelectorAll('.shop-cat-btn'),
+            buySelectBtn: document.getElementById('buy-select-btn'),
+            previewCanvas: document.getElementById('skin-preview-canvas'),
+            previewName: document.getElementById('preview-name'),
+            ping: document.getElementById('ping'),
             hotkeyBtns: document.querySelectorAll('.key-btn'),
             tabs: document.querySelectorAll('.tab-btn'),
             tabContents: document.querySelectorAll('.tab-content')
@@ -56,6 +63,9 @@ class Game {
             noSkins: false,
             darkTheme: true,
             animationDelay: 120,
+            coins: 5000,
+            ownedSkins: [],
+            selectedSkin: '',
             hotkeys: {
                 split: 'Space',
                 feed: 'KeyW',
@@ -74,6 +84,30 @@ class Game {
         this.heldKeys = new Set();
         this.isFrozen = false;
         this.playing = false;
+
+        this.shopData = {
+            level: [
+                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
+                { id: '52k', name: '52k', price: 0, type: 'skin' },
+            ],
+            owner: [
+                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
+                { id: '52k', name: '52k', price: 0, type: 'skin' },
+            ],
+            premium: [
+                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
+                { id: '52k', name: '52k', price: 0, type: 'skin' },
+            ],
+            coins: [
+                { id: 'coins_1000', name: '1000 Coins', price: 0.99, type: 'coins', amount: 1000 },
+                { id: 'coins_5000', name: '5000 Coins', price: 3.99, type: 'coins', amount: 5000 }
+            ]
+        };
+
+        this.currentShopCategory = 'level';
+        this.previewItem = null;
+        this.pingStart = 0;
+        this.pingInterval = null;
 
         this.loadSettings();
         this.init();
@@ -169,7 +203,24 @@ class Game {
                 const tabId = btn.dataset.tab;
                 this.ui.tabs.forEach(b => b.classList.toggle('active', b === btn));
                 this.ui.tabContents.forEach(c => c.classList.toggle('active', c.id === tabId));
+                if (tabId === 'tab-shop') {
+                    this.refreshShop();
+                }
             });
+        });
+
+        // Shop Category Buttons
+        this.ui.shopCatBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                this.currentShopCategory = btn.dataset.cat;
+                this.ui.shopCatBtns.forEach(b => b.classList.toggle('active', b === btn));
+                this.refreshShop();
+            });
+        });
+
+        // Buy/Select Button
+        this.ui.buySelectBtn.addEventListener('click', () => {
+            this.handleShopAction();
         });
 
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
@@ -201,7 +252,7 @@ class Game {
 
             if (nickname !== this.nickname || this.ownIds.length === 0) {
                 this.nickname = nickname;
-                this.connection.spawn(this.nickname);
+                this.connection.spawn(this.nickname, this.config.selectedSkin);
             }
             return;
         }
@@ -212,7 +263,7 @@ class Game {
 
         this.reset();
         this.saveSettings();
-        this.connection.connect(url, this.nickname);
+        this.connection.connect(url, this.nickname, false, this.config.selectedSkin);
     }
     handleSpectate() {
         const nickname = this.ui.nickname.value || 'Unnamed';
@@ -220,14 +271,17 @@ class Game {
 
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
             this.hideMenu();
+            this.playing = false;
             this.connection.spectate();
             return;
         }
 
         this.nickname = nickname;
         this.hideMenu();
+        this.playing = false;
 
         this.reset();
+        this.saveSettings();
         this.connection.connect(url, this.nickname, true);
     }
     reset() {
@@ -260,7 +314,133 @@ class Game {
     hideMenu() {
         this.ui.mainMenu.style.display = 'none';
         this.ui.leaderboard.style.display = 'block';
-        this.ui.stats.style.display = 'block';
+        this.ui.stats.style.display = 'flex';
+        this.startPing();
+    }
+
+    startPing() {
+        if (this.pingInterval) clearInterval(this.pingInterval);
+        this.pingInterval = setInterval(() => {
+            if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN) {
+                this.pingStart = performance.now();
+                this.connection.send(new Uint8Array([255])); // Dummy byte for ping
+            }
+        }, 2000);
+    }
+
+    updatePing() {
+        if (this.pingStart === 0) return;
+        const ping = Math.round(performance.now() - this.pingStart);
+        this.ui.ping.textContent = `Ping: ${ping}ms`;
+        this.ui.ping.className = ping > 150 ? 'high' : '';
+        this.pingStart = 0;
+    }
+
+    refreshShop() {
+        this.ui.userCoins.textContent = this.config.coins;
+        const items = this.shopData[this.currentShopCategory] || [];
+        this.ui.shopGrid.innerHTML = items.map(item => {
+            const isOwned = this.config.ownedSkins.includes(item.id);
+            const isSelected = this.config.selectedSkin === item.id;
+            const imgPath = item.type === 'skin' ? `./skins/${item.id}.png` : './assets/res/noSkin.png';
+
+            return `
+                <div class="shop-item ${isSelected ? 'selected' : ''}" data-id="${item.id}">
+                    <img src="${imgPath}" onerror="this.src='./assets/res/noSkin.png'">
+                    <span class="item-name">${item.name}</span>
+                    <span class="item-price">${isOwned ? 'OWNED' : (item.type === 'coins' ? '$' + item.price : item.price + ' Coins')}</span>
+                </div>
+            `;
+        }).join('');
+
+        this.ui.shopGrid.querySelectorAll('.shop-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const item = items.find(i => i.id === el.dataset.id);
+                this.selectPreview(item);
+            });
+        });
+    }
+
+    selectPreview(item) {
+        this.previewItem = item;
+        this.ui.previewName.textContent = item.name;
+
+        const isOwned = this.config.ownedSkins.includes(item.id);
+        const isSelected = this.config.selectedSkin === item.id;
+
+        if (item.type === 'coins') {
+            this.ui.buySelectBtn.textContent = `Buy for $${item.price}`;
+            this.ui.buySelectBtn.disabled = false;
+        } else {
+            if (isOwned) {
+                this.ui.buySelectBtn.textContent = isSelected ? 'Selected' : 'Select Skin';
+                this.ui.buySelectBtn.disabled = isSelected;
+            } else {
+                this.ui.buySelectBtn.textContent = `Buy for ${item.price}`;
+                this.ui.buySelectBtn.disabled = this.config.coins < item.price;
+            }
+        }
+
+        this.drawPreview(item);
+    }
+
+    drawPreview(item) {
+        const canvas = this.ui.previewCanvas;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        const radius = 70;
+
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+
+        if (item.type === 'skin') {
+            const skinImg = this.renderer.getSkin(item.id);
+            if (skinImg && skinImg.complete) {
+                ctx.save();
+                ctx.clip();
+                ctx.drawImage(skinImg, centerX - radius, centerY - radius, radius * 2, radius * 2);
+                ctx.restore();
+            } else {
+                ctx.fillStyle = '#3a7bd5';
+                ctx.fill();
+            }
+        } else {
+            ctx.fillStyle = '#ffd700';
+            ctx.fill();
+        }
+    }
+
+    handleShopAction() {
+        if (!this.previewItem) return;
+        const item = this.previewItem;
+
+        if (item.type === 'coins') {
+            alert(`Mock: Redirecting to payment for ${item.name}`);
+            this.config.coins += item.amount;
+            this.saveSettings();
+            this.refreshShop();
+            return;
+        }
+
+        const isOwned = this.config.ownedSkins.includes(item.id);
+        if (isOwned) {
+            this.config.selectedSkin = item.id;
+            this.saveSettings();
+            this.refreshShop();
+            this.selectPreview(item);
+        } else {
+            if (this.config.coins >= item.price) {
+                this.config.coins -= item.price;
+                this.config.ownedSkins.push(item.id);
+                this.config.selectedSkin = item.id; // Auto-select on purchase
+                this.saveSettings();
+                this.refreshShop();
+                this.selectPreview(item);
+            }
+        }
     }
 
     syncTime(serverTime) {
@@ -311,7 +491,12 @@ class Game {
         } else if (e.code === h.feed) {
             this.connection.send(new Uint8Array([21]));
         } else if (e.code === h.double) {
-            this.executeMultiSplit(2);
+            if (this.playing) {
+                this.executeMultiSplit(2);
+            } else {
+                // MultiOgarII: Toggle between follow and free-roam
+                this.connection.send(new Uint8Array([18]));
+            }
         } else if (e.code === h.triple) {
             this.executeMultiSplit(4);
         } else if (e.code === h.quad) {
@@ -376,9 +561,16 @@ class Game {
     updateNode(id, x, y, size, color, name, skin, jagged, ejected) {
         let node = this.nodes.get(id);
         const now = this.getSyncedTime();
+
+        // Auto-extract skin from name if the explicit skin is missing
+        let extractedSkin = skin;
+        if (!extractedSkin && name) {
+            extractedSkin = Game.extractSkin(name);
+        }
+
         if (!node) {
             node = {
-                id, x, y, size, color, name, skin, jagged, ejected,
+                id, x, y, size, color, name, skin: extractedSkin, jagged, ejected,
                 targetX: x, targetY: y, targetSize: size,
                 startX: x, startY: y, startSize: size,
                 lastUpdate: now,
@@ -396,7 +588,14 @@ class Game {
             node.targetSize = size;
             node.lastUpdate = now;
             if (color !== null) node.color = color;
-            if (name !== null) node.name = name;
+            if (name !== null) {
+                node.name = name;
+                // Update skin if it wasn't explicitly provided but can be extracted from the new name
+                if (!skin) {
+                    const s = Game.extractSkin(name);
+                    if (s) node.skin = s;
+                }
+            }
             if (skin !== null) node.skin = skin;
             if (jagged !== undefined) node.jagged = jagged;
             if (ejected !== undefined) node.ejected = ejected;
@@ -420,18 +619,58 @@ class Game {
         }
     }
 
+    static parseName(name) {
+        if (!name) return "";
+        // Removes all combinations of {skin} and <level/rank/skin> tags at the start recursively
+        return name.replace(/^(\{[^}]*\}|<[^>]*>)+/, '').trim();
+    }
+
+    static extractSkin(name) {
+        if (!name) return "";
+        // Prioritize <skin> format, fall back to {skin}
+        const match = name.match(/^<([^>]*)>/) || name.match(/^\{([^}]*)\}/);
+        return match ? match[1].toLowerCase().trim() : "";
+    }
+
     updateLeaderboard(list) {
-        this.ui.lbList.innerHTML = list.map((name, index) => {
+        this.ui.lbList.innerHTML = list.map((item, index) => {
+            const cleanName = Game.parseName(item.name);
             const isMe = this.ownIds.some(id => {
                 const node = this.nodes.get(id);
-                return node && node.name === name;
+                return node && node.name === item.name;
             });
             return `
-                <li class="${isMe ? 'me' : ''}">
+                <li class="${isMe ? 'me' : ''}" data-id="${item.id}" data-name="${item.name}">
                     <span class="rank">${index + 1}</span>
-                    <span class="name">${name || 'An un-named cell'}</span>
+                    <span class="name">${cleanName || 'An un-named cell'}</span>
                 </li>`;
         }).join('');
+
+        this.ui.lbList.querySelectorAll('li').forEach(el => {
+            el.addEventListener('click', () => {
+                const id = parseInt(el.dataset.id);
+                const name = el.dataset.name;
+                this.handleLeaderboardClick(id, name);
+            });
+        });
+    }
+
+    handleLeaderboardClick(id, name) {
+        if (this.playing || !this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) {
+            this.handleSpectate();
+        }
+
+        // Update renderer for manual tracking if server ID fails
+        this.renderer.spectateTargetName = name;
+        this.renderer.serverCamera = false; // Briefly take over to find the target
+
+        // Protocol 6 Spectate Targeted (supported by Ogar v6 variants)
+        const writer = new BinaryWriter();
+        writer.writeUInt8(1); // SPECTATE
+        if (id) {
+            writer.writeUInt32(id);
+        }
+        this.connection.send(writer.build());
     }
 
     loop(time) {

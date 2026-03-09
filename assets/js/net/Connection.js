@@ -7,8 +7,9 @@ export default class Connection {
         this.url = '';
     }
 
-    connect(url, nickname, spectate = false) {
+    connect(url, nickname, spectate = false, skin = "") {
         this.url = url;
+        this.initialSkin = skin;
         console.log(`Connecting to ${url}...`);
 
         if (this.ws) {
@@ -31,6 +32,7 @@ export default class Connection {
 
     onOpen(nickname, spectate) {
         console.log("Connected to Ogar v6!");
+        const skin = this.initialSkin || "";
 
         // Protocol 6 Handshake
         this.send(new Uint8Array([254, 6, 0, 0, 0])); // Version 6
@@ -39,7 +41,7 @@ export default class Connection {
         if (spectate) {
             this.spectate();
         } else {
-            this.spawn(nickname);
+            this.spawn(nickname, skin);
         }
     }
 
@@ -49,14 +51,16 @@ export default class Connection {
         this.send(writer.build());
     }
 
-    spawn(nickname) {
+    spawn(nickname, skin = "") {
         const writer = new BinaryWriter();
         writer.writeUInt8(PROTOCOL.SEND.SPAWN);
-        writer.writeStringUTF8(nickname);
+        const nameWithSkin = skin ? `<${skin}>${nickname}` : nickname;
+        writer.writeStringUTF8(nameWithSkin);
         this.send(writer.build());
     }
 
     onMessage(msg) {
+        this.game.updatePing();
         const reader = new BinaryReader(new DataView(msg.data));
         const packetId = reader.readUInt8();
         try {
@@ -141,7 +145,7 @@ export default class Connection {
             let name = flags.updName ? reader.readStringUTF8() : null;
 
             this.game.updateNode(id, x, y, size, color, name, skin, flags.jagged, flags.ejected);
-            
+
         }
 
         // 3. Disappear records
@@ -161,8 +165,10 @@ export default class Connection {
         const count = reader.readUInt32();
         const list = [];
         for (let i = 0; i < count; i++) {
-            if (type === 0x31) reader.readUInt32(); // skip "isMe" or ID
-            list.push(reader.readStringUTF8() || "Unnamed");
+            let id = 0;
+            if (type === 0x31) id = reader.readUInt32();
+            const name = reader.readStringUTF8() || "Unnamed";
+            list.push({ id, name });
         }
         this.game.updateLeaderboard(list);
     }
@@ -175,15 +181,15 @@ export default class Connection {
         this.game.borders = { l, t, r, b };
 
         // Center camera on first border receipt (Cigar2 style)
-       /* if (!this.game.mapCenterSet) {
-            this.game.mapCenterSet = true;
-            const centerX = (l + r) / 2;
-            const centerY = (t + b) / 2;
-            const renderer = this.game.renderer;
-            renderer.camX = renderer.target.x = centerX;
-            renderer.camY = renderer.target.y = centerY;
-            renderer.scale = renderer.target.scale = 1;
-        }*/
+        /* if (!this.game.mapCenterSet) {
+             this.game.mapCenterSet = true;
+             const centerX = (l + r) / 2;
+             const centerY = (t + b) / 2;
+             const renderer = this.game.renderer;
+             renderer.camX = renderer.target.x = centerX;
+             renderer.camY = renderer.target.y = centerY;
+             renderer.scale = renderer.target.scale = 1;
+         }*/
     }
 
     onClose() {
