@@ -144,24 +144,121 @@ button:active {
 
 .hud-item {
     position: absolute;
-    background: var(--panel-bg);
-    backdrop-filter: blur(5px);
-    border-radius: 8px;
-    padding: 0.5rem 1rem;
-    font-size: 0.9rem;
+    background: rgba(12, 13, 16, 0.4);
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--border-radius);
+    padding: 0.8rem 1.2rem;
+    font-size: 0.95rem;
     pointer-events: none;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 #leaderboard {
-    top: 20px;
-    right: 20px;
-    min-width: 180px;
+    top: 25px;
+    right: 25px;
+    min-width: 220px;
+    padding: 0;
+    overflow: hidden;
+    animation: slideInRight 0.5s ease-out;
+}
+
+#leaderboard h3 {
+    padding: 1rem 1.2rem;
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    background: linear-gradient(to right, rgba(0, 210, 255, 0.2), transparent);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--accent-color);
+}
+
+#lb-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.5rem 0;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+/* Custom Scrollbar */
+#lb-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+#lb-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#lb-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+}
+
+#lb-list::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-color);
+}
+
+#lb-list li {
+    padding: 0.6rem 1.2rem;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: background 0.2s;
+    border-left: 2px solid transparent;
+    color: white;
+}
+
+#lb-list li.me {
+    background: rgba(0, 210, 255, 0.15);
+    border-left: 2px solid var(--accent-color);
+    color: var(--accent-color);
+    font-weight: 700;
+}
+
+#lb-list li .rank {
+    font-family: 'JetBrains Mono', monospace;
+    opacity: 0.6;
+    min-width: 20px;
+    font-size: 0.85rem;
+}
+
+#lb-list li .name {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
 }
 
 #stats {
-    bottom: 20px;
-    left: 20px;
+    bottom: 25px;
+    left: 25px;
+    display: flex;
+    gap: 15px;
 }
+
+#stats span {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 
 /* Settings Box */
 .settings-box {

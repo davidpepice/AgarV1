@@ -48,6 +48,11 @@
                     <span class="checkmark"></span>
                     No Skins
                 </label>
+                <label class="checkbox-container">
+                    <input type="checkbox" id="dark-theme" checked>
+                    <span class="checkmark"></span>
+                    Dark Mode
+                </label>
                 <div class="slider-container">
                     <label for="anim-delay">Animation Delay: <span id="anim-delay-value">120</span>ms</label>
                     <input type="range" id="anim-delay" min="50" max="240" value="120">
@@ -103,8 +108,9 @@
     </div>
 
     <div id="stats" class="hud-item" style="display: none;">
-        <span id="fps">FPS: 0</span> |
+        <span id="fps">FPS: 0</span>
         <span id="mass">Mass: 0</span>
+        <span id="ping">Ping: 0</span>
     </div>
 
     <script src="assets/js/core/Game.js" type="module"></script>

@@ -75,8 +75,9 @@ export default class Renderer {
         this.updateCamera();
 
         const ctx = this.ctx;
+        const isDark = this.game.config.darkTheme;
 
-        ctx.fillStyle = '#111';
+        ctx.fillStyle = isDark ? '#111' : '#f2fbff';
         ctx.fillRect(0, 0, this.width, this.height);
 
         ctx.save();
@@ -94,7 +95,7 @@ export default class Renderer {
     drawGrid(ctx) {
         ctx.beginPath();
         ctx.lineWidth = 1;
-        ctx.strokeStyle = '#222';
+        ctx.strokeStyle = this.game.config.darkTheme ? '#222' : '#d7e8f0';
         const left = this.camX - (this.width / 2) / this.scale;
         const top = this.camY - (this.height / 2) / this.scale;
         const right = this.camX + (this.width / 2) / this.scale;
@@ -114,7 +115,7 @@ export default class Renderer {
     drawBorders(ctx) {
         const b = this.game.borders;
         if (!b) return;
-        ctx.strokeStyle = '#ffffff';
+        ctx.strokeStyle = this.game.config.darkTheme ? '#ffffff' : '#222222';
         ctx.lineWidth = 15;
         ctx.strokeRect(b.l, b.t, b.r - b.l, b.b - b.t);
     }

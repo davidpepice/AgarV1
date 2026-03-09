@@ -44,6 +44,7 @@ class Game {
             noSkins: document.getElementById('no-skins'),
             animDelay: document.getElementById('anim-delay'),
             animDelayValue: document.getElementById('anim-delay-value'),
+            darkTheme: document.getElementById('dark-theme'),
             hotkeyBtns: document.querySelectorAll('.key-btn'),
             tabs: document.querySelectorAll('.tab-btn'),
             tabContents: document.querySelectorAll('.tab-content')
@@ -53,6 +54,7 @@ class Game {
             showNames: true,
             showMass: true,
             noSkins: false,
+            darkTheme: true,
             animationDelay: 120,
             hotkeys: {
                 split: 'Space',
@@ -89,6 +91,7 @@ class Game {
                     this.ui.showNames.checked = this.config.showNames;
                     this.ui.showMass.checked = this.config.showMass;
                     this.ui.noSkins.checked = this.config.noSkins || false;
+                    this.ui.darkTheme.checked = this.config.darkTheme !== false;
                     this.ui.animDelay.value = this.config.animationDelay;
                     this.ui.animDelayValue.textContent = this.config.animationDelay;
 
@@ -138,6 +141,10 @@ class Game {
         });
         this.ui.noSkins.addEventListener('change', (e) => {
             this.config.noSkins = e.target.checked;
+            this.saveSettings();
+        });
+        this.ui.darkTheme.addEventListener('change', (e) => {
+            this.config.darkTheme = e.target.checked;
             this.saveSettings();
         });
         this.ui.animDelay.addEventListener('input', (e) => {
@@ -414,7 +421,17 @@ class Game {
     }
 
     updateLeaderboard(list) {
-        this.ui.lbList.innerHTML = list.map(name => `<li>${name}</li>`).join('');
+        this.ui.lbList.innerHTML = list.map((name, index) => {
+            const isMe = this.ownIds.some(id => {
+                const node = this.nodes.get(id);
+                return node && node.name === name;
+            });
+            return `
+                <li class="${isMe ? 'me' : ''}">
+                    <span class="rank">${index + 1}</span>
+                    <span class="name">${name || 'An un-named cell'}</span>
+                </li>`;
+        }).join('');
     }
 
     loop(time) {
