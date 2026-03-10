@@ -42,46 +42,47 @@ export default class Renderer {
     }
 
     updateCamera() {
-        // If the server is NOT sending camera position, calculate from player cells
-        if (!this.serverCamera) {
-            const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
-                return this.game.ownIds.includes(n.id);
+        const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
+            return this.game.ownIds.includes(n.id) && !n.destroyed;
+        });
+
+        if (playerNodes.length > 0) {
+            // Priority 1: Following own cells (Playing)
+            let avgX = 0, avgY = 0, sumSize = 0;
+            playerNodes.forEach(node => {
+                avgX += node.x;
+                avgY += node.y;
+                sumSize += node.size;
             });
 
-            if (playerNodes.length > 0) {
+            this.target.x = avgX / playerNodes.length;
+            this.target.y = avgY / playerNodes.length;
+
+            const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
+            this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+        } else if (this.spectateTargetName) {
+            // Priority 2: Manual spectate tracking (Leaderboard click)
+            const targetNodes = Array.from(this.game.nodes.values()).filter(n => n.name === this.spectateTargetName && !n.destroyed);
+            if (targetNodes.length > 0) {
                 let avgX = 0, avgY = 0, sumSize = 0;
-                playerNodes.forEach(node => {
+                targetNodes.forEach(node => {
                     avgX += node.x;
                     avgY += node.y;
                     sumSize += node.size;
                 });
-
-                this.target.x = avgX / playerNodes.length;
-                this.target.y = avgY / playerNodes.length;
+                this.target.x = avgX / targetNodes.length;
+                this.target.y = avgY / targetNodes.length;
 
                 const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
                 this.target.scale = sizeScale * this.viewportScale * this.userZoom;
-            } else if (this.spectateTargetName) {
-                // Manual spectate fallback: find nodes by name
-                const targetNodes = Array.from(this.game.nodes.values()).filter(n => n.name === this.spectateTargetName && !n.destroyed);
-                if (targetNodes.length > 0) {
-                    let avgX = 0, avgY = 0, sumSize = 0;
-                    targetNodes.forEach(node => {
-                        avgX += node.x;
-                        avgY += node.y;
-                        sumSize += node.size;
-                    });
-                    this.target.x = avgX / targetNodes.length;
-                    this.target.y = avgY / targetNodes.length;
-
-                    const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
-                    this.target.scale = sizeScale * this.viewportScale * this.userZoom;
-                }
             }
         }
+        // Priority 3: Default server camera (Top 1 / Free Roam)
+        // If Priority 1 and 2 are inactive, this.target.x/y remains as set by packet 0x11
+
 
         // Smooth lerp toward target (Cigar2 style)
-        const lerpFactor = 0.1;
+        const lerpFactor = 0.2;
         this.camX += (this.target.x - this.camX) * lerpFactor;
         this.camY += (this.target.y - this.camY) * lerpFactor;
         this.scale += (this.target.scale - this.scale) * 0.05;

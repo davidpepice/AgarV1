@@ -227,6 +227,10 @@ class Game {
         window.addEventListener('keydown', (e) => this.handleKeyDown(e));
         window.addEventListener('keyup', (e) => this.handleKeyUp(e));
         window.addEventListener('wheel', (e) => this.handleWheel(e), { passive: true });
+        window.addEventListener('blur', () => {
+            this.heldKeys.clear();
+            this.stopMacroFeed();
+        });
         requestAnimationFrame((t) => this.loop(t));
     }
 
@@ -244,6 +248,8 @@ class Game {
     handlePlay() {
         const nickname = this.ui.nickname.value || 'Unnamed';
         const url = this.ui.serverUrl.value || 'ws://localhost:8080';
+
+        this.renderer.spectateTargetName = ""; // Clear manual spectate
 
         // If already connected to same server, just spawn or close menu
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
@@ -495,6 +501,7 @@ class Game {
                 this.executeMultiSplit(2);
             } else {
                 // MultiOgarII: Toggle between follow and free-roam
+                this.renderer.spectateTargetName = ""; // Reset manual focus
                 this.connection.send(new Uint8Array([18]));
             }
         } else if (e.code === h.triple) {
@@ -525,7 +532,7 @@ class Game {
             this.connection.send(new Uint8Array([17]));
             count++;
             if (count >= times) clearInterval(interval);
-        }, 40);
+        }, 35); // 35ms to avoid server tick skipping (MultiOgarII is 40ms)
     }
 
     startMacroFeed() {
