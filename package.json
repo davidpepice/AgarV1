@@ -1,0 +1,12 @@
+{
+  "name": "agarv1",
+  "version": "1.0.0",
+  "description": "Este proyecto es un cliente de Agar.io escalable y moderno, diseñado para ser compatible con servidores **MultiOgar-L-L** y **Cigar2** utilizando el **Protocolo 6**.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

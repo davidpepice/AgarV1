@@ -10,7 +10,7 @@ export default class Connection {
     connect(url, nickname, spectate = false, skin = "") {
         this.url = url;
         this.initialSkin = skin;
-        console.log(`Connecting to ${url}...`);
+        //console.log(`Connecting to ${url}...`);
 
         if (this.ws) {
             this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
@@ -31,8 +31,13 @@ export default class Connection {
     }
 
     onOpen(nickname, spectate) {
-        console.log("Connected to Ogar v6!");
+        //console.log("Connected to Ogar v6!");
         const skin = this.initialSkin || "";
+
+        // Show connection success
+        if (this.game.showConnected) {
+            this.game.showConnected();
+        }
 
         // Protocol 6 Handshake
         this.send(new Uint8Array([254, 6, 0, 0, 0])); // Version 6
@@ -199,6 +204,9 @@ export default class Connection {
 
     onError(err) {
         console.error("WebSocket error:", err);
+        if (this.game.hideConnecting) {
+            this.game.hideConnecting();
+        }
     }
 
     send(data) {

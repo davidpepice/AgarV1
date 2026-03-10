@@ -54,7 +54,10 @@ class Game {
             ping: document.getElementById('ping'),
             hotkeyBtns: document.querySelectorAll('.key-btn'),
             tabs: document.querySelectorAll('.tab-btn'),
-            tabContents: document.querySelectorAll('.tab-content')
+            tabContents: document.querySelectorAll('.tab-content'),
+            connectingOverlay: document.getElementById('connecting-overlay'),
+            connectingText: document.getElementById('connecting-text'),
+            connectingSpinner: document.getElementById('connecting-spinner')
         };
 
         this.config = {
@@ -231,10 +234,43 @@ class Game {
             this.heldKeys.clear();
             this.stopMacroFeed();
         });
+
+        this.autoConnect();
         requestAnimationFrame((t) => this.loop(t));
     }
 
+    autoConnect() {
+        const url = this.ui.serverUrl.value || 'ws://localhost:8080';
+        //console.log("Auto-connecting to server...");
+        this.showConnecting("Connecting to server...");
+        this.connection.connect(url, "Spectator", true);
+    }
+
+    showConnecting(message) {
+        this.ui.connectingOverlay.classList.remove('success');
+        this.ui.connectingOverlay.style.display = 'flex';
+        this.ui.connectingText.textContent = message;
+        this.ui.connectingSpinner.style.display = 'block';
+    }
+
+    showConnected() {
+        this.ui.connectingOverlay.classList.add('success');
+        this.ui.connectingText.textContent = "Connected!";
+        this.ui.connectingSpinner.style.display = 'none';
+
+        setTimeout(() => {
+            this.ui.connectingOverlay.style.display = 'none';
+            this.ui.connectingOverlay.classList.remove('success');
+        }, 1000);
+    }
+
+    hideConnecting() {
+        this.ui.connectingOverlay.style.display = 'none';
+        this.ui.connectingOverlay.classList.remove('success');
+    }
+
     handleWheel(e) {
+        if (this.isFrozen || this.ui.mainMenu.style.display !== 'none') return;
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
         this.renderer.userZoom = Math.max(0.1, Math.min(5.0, this.renderer.userZoom * delta));
     }
@@ -251,25 +287,25 @@ class Game {
 
         this.renderer.spectateTargetName = ""; // Clear manual spectate
 
-        // If already connected to same server, just spawn or close menu
-        if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
-            this.hideMenu();
-            this.playing = true;
+        // If connection is not open, show overlay and wait
+        if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) {
+            this.showConnecting("Connecting to server...");
+            this.connection.connect(url, nickname, false, this.config.selectedSkin);
+            return;
+        }
 
-            if (nickname !== this.nickname || this.ownIds.length === 0) {
-                this.nickname = nickname;
-                this.connection.spawn(this.nickname, this.config.selectedSkin);
-            }
+        // If already connected but as spectator or different server, update and spawn
+        if (this.connection.url !== url) {
+            this.showConnecting("Connecting to server...");
+            this.connection.connect(url, nickname, false, this.config.selectedSkin);
             return;
         }
 
         this.nickname = nickname;
         this.hideMenu();
         this.playing = true;
-
-        this.reset();
+        this.connection.spawn(this.nickname, this.config.selectedSkin);
         this.saveSettings();
-        this.connection.connect(url, this.nickname, false, this.config.selectedSkin);
     }
     handleSpectate() {
         const nickname = this.ui.nickname.value || 'Unnamed';
@@ -282,6 +318,7 @@ class Game {
             return;
         }
 
+        this.showConnecting("Connecting to server...");
         this.nickname = nickname;
         this.hideMenu();
         this.playing = false;
@@ -471,6 +508,10 @@ class Game {
     }
 
     handleKeyDown(e) {
+        // Prevent game actions if the user is typing in an input field
+        const activeElement = document.activeElement;
+        const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA');
+
         if (this.bindingKey) {
             const action = this.bindingKey.dataset.action;
             this.config.hotkeys[action] = e.code;
@@ -489,6 +530,9 @@ class Game {
             this.ui.mainMenu.style.display = isHidden ? 'flex' : 'none';
             return;
         }
+
+        // If typing or menu is visible, don't execute game actions
+        if (isTyping || this.ui.mainMenu.style.display !== 'none') return;
 
         // Action Mapping
         const h = this.config.hotkeys;
@@ -551,7 +595,7 @@ class Game {
 
     sendMouse() {
         if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) return;
-        if (this.isFrozen) return;
+        if (this.isFrozen || this.ui.mainMenu.style.display !== 'none') return;
         const renderer = this.renderer;
         const scale = renderer.scale;
         const worldX = (this.mouseX - this.canvas.width / 2) / scale + renderer.camX;
