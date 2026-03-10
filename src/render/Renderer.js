@@ -82,7 +82,7 @@ export default class Renderer {
 
 
         // Smooth lerp toward target (Cigar2 style)
-        const lerpFactor = 0.2;
+        const lerpFactor = 0.1;
         this.camX += (this.target.x - this.camX) * lerpFactor;
         this.camY += (this.target.y - this.camY) * lerpFactor;
         this.scale += (this.target.scale - this.scale) * 0.05;
@@ -226,7 +226,7 @@ export default class Renderer {
                 if (showName) {
                     const cleanName = this.game.constructor.parseName(node.name);
                     const texture = this.getTextTexture(cleanName);
-                    const targetW = node.size * 1.5;
+                    const targetW = node.size * 1;
                     const targetH = targetW * (texture.height / texture.width);
                     const yOffset = showMass ? node.size * 0.2 : 0;
                     ctx.drawImage(texture, node.x - targetW / 2, node.y - yOffset - targetH / 2, targetW, targetH);
@@ -235,7 +235,7 @@ export default class Renderer {
                 if (showMass) {
                     const mass = Math.floor((node.size * node.size) / 100);
                     const texture = this.getTextTexture(mass.toString());
-                    const targetW = node.size * 0.8;
+                    const targetW = node.size * 0.3;
                     const targetH = targetW * (texture.height / texture.width);
                     const yOffset = showName ? node.size * 0.35 : 0;
                     ctx.drawImage(texture, node.x - targetW / 2, node.y + yOffset - targetH / 2, targetW, targetH);

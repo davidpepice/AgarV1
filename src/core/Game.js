@@ -270,7 +270,6 @@ class Game {
     }
 
     handleWheel(e) {
-        if (this.isFrozen || this.ui.mainMenu.style.display !== 'none') return;
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
         this.renderer.userZoom = Math.max(0.1, Math.min(5.0, this.renderer.userZoom * delta));
     }
