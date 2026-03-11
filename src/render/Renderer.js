@@ -109,6 +109,10 @@ export default class Renderer {
         this.drawBorders(ctx);
         this.drawNodes(ctx);
 
+        if (this.game.isMobile && this.game.joystick.active) {
+            this.drawDirectionArrow(ctx);
+        }
+
         ctx.restore();
     }
 
@@ -245,6 +249,47 @@ export default class Renderer {
         ctx.globalAlpha = 1;
 
         for (let i = 0; i < toRemove.length; i++) this.game.nodes.delete(toRemove[i]);
+    }
+
+    drawDirectionArrow(ctx) {
+        const playerNodes = Array.from(this.game.nodes.values()).filter(n => {
+            return this.game.ownIds.includes(n.id) && !n.destroyed;
+        });
+
+        if (playerNodes.length === 0) return;
+
+        // Calculate center and bounding radius of all own cells
+        let avgX = 0, avgY = 0, maxDist = 0;
+        playerNodes.forEach(n => {
+            avgX += n.x;
+            avgY += n.y;
+        });
+        avgX /= playerNodes.length;
+        avgY /= playerNodes.length;
+
+        playerNodes.forEach(n => {
+            const d = Math.sqrt((n.x - avgX) ** 2 + (n.y - avgY) ** 2) + n.size;
+            if (d > maxDist) maxDist = d;
+        });
+
+        ctx.save();
+        ctx.translate(avgX, avgY);
+        ctx.rotate(this.game.joystick.angle);
+
+        // Compensation for camera scale to keep arrow size consistent
+        const baseArrowSize = 18;
+        const arrowSize = baseArrowSize / this.scale;
+        const dist = maxDist + (15 / this.scale);
+
+        ctx.beginPath();
+        ctx.moveTo(dist + arrowSize, 0);
+        ctx.lineTo(dist, arrowSize / 1.5);
+        ctx.lineTo(dist, -arrowSize / 1.5);
+        ctx.closePath();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+        ctx.fill();
+        ctx.restore();
     }
 
     /*drawText(ctx, node) {

@@ -4,7 +4,7 @@
   "description": "Este proyecto es un cliente de Agar.io escalable y moderno, diseñado para ser compatible con servidores **MultiOgar-L-L** y **Cigar2** utilizando el **Protocolo 6**.",
   "main": "index.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
   },

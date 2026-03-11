@@ -10,6 +10,7 @@ class Game {
 
         this.nodes = new Map();
         this.ownIds = [];
+        this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in window);
         this.nickname = "";
         this.borders = { l: -5000, t: -5000, r: 5000, b: 5000 };
 
@@ -87,6 +88,18 @@ class Game {
         this.heldKeys = new Set();
         this.isFrozen = false;
         this.playing = false;
+
+        // Joystick state
+        this.joystick = {
+            active: false,
+            touchId: null,
+            originX: 0,
+            originY: 0,
+            x: 0,
+            y: 0,
+            distance: 0,
+            angle: 0
+        };
 
         this.shopData = {
             level: [
@@ -235,8 +248,99 @@ class Game {
             this.stopMacroFeed();
         });
 
+        if (this.isMobile) {
+            this.ui.touchControls = document.getElementById('touch-controls');
+            this.ui.touchControls.style.display = 'block';
+            this.initTouchControls();
+        }
+
         this.autoConnect();
         requestAnimationFrame((t) => this.loop(t));
+    }
+
+    initTouchControls() {
+        const joystick = document.getElementById('joystick-container');
+        const nipple = document.getElementById('joystick-nipple');
+        const btnSplit = document.getElementById('btn-split');
+        const btnFeed = document.getElementById('btn-feed');
+
+        const handleTouch = (e) => {
+            if (!this.joystick.active) return;
+            const touch = Array.from(e.touches).find(t => t.identifier === this.joystick.touchId);
+            if (!touch) return;
+
+            const rect = joystick.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+
+            let dx = touch.clientX - centerX;
+            let dy = touch.clientY - centerY;
+            const distance = Math.min(Math.sqrt(dx * dx + dy * dy), rect.width / 2);
+            const angle = Math.atan2(dy, dx);
+
+            this.joystick.x = Math.cos(angle) * distance;
+            this.joystick.y = Math.sin(angle) * distance;
+            this.joystick.distance = distance / (rect.width / 2);
+            this.joystick.angle = angle;
+
+            nipple.style.transform = `translate(calc(-50% + ${this.joystick.x}px), calc(-50% + ${this.joystick.y}px))`;
+        };
+
+        joystick.addEventListener('touchstart', (e) => {
+            if (this.joystick.active) return;
+            const touch = e.changedTouches[0];
+            this.joystick.active = true;
+            this.joystick.touchId = touch.identifier;
+            handleTouch(e);
+            e.preventDefault();
+        }, { passive: false });
+
+        window.addEventListener('touchmove', (e) => {
+            if (this.joystick.active) {
+                handleTouch(e);
+                // Only prevent default if we found the joystick touch to avoid blocking other elements
+                if (Array.from(e.changedTouches).some(t => t.identifier === this.joystick.touchId)) {
+                    e.preventDefault();
+                }
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchend', (e) => {
+            if (this.joystick.active) {
+                const touchEnded = Array.from(e.changedTouches).some(t => t.identifier === this.joystick.touchId);
+                if (touchEnded) {
+                    this.joystick.active = false;
+                    this.joystick.touchId = null;
+                    this.joystick.x = 0;
+                    this.joystick.y = 0;
+                    this.joystick.distance = 0;
+                    nipple.style.transform = `translate(-50%, -50%)`;
+                }
+            }
+        });
+
+        // Split button
+        btnSplit.addEventListener('touchstart', (e) => {
+            this.connection.send(new Uint8Array([17]));
+            btnSplit.classList.add('active');
+            e.preventDefault();
+        }, { passive: false });
+
+        btnSplit.addEventListener('touchend', () => {
+            btnSplit.classList.remove('active');
+        });
+
+        // Feed button (Macro)
+        btnFeed.addEventListener('touchstart', (e) => {
+            this.startMacroFeed();
+            btnFeed.classList.add('active');
+            e.preventDefault();
+        }, { passive: false });
+
+        btnFeed.addEventListener('touchend', () => {
+            this.stopMacroFeed();
+            btnFeed.classList.remove('active');
+        });
     }
 
     autoConnect() {
@@ -594,11 +698,23 @@ class Game {
 
     sendMouse() {
         if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) return;
-        if (this.isFrozen || this.ui.mainMenu.style.display !== 'none') return;
+        if (this.isFrozen || (this.ui.mainMenu.style.display !== 'none' && !this.isMobile)) return;
+
         const renderer = this.renderer;
         const scale = renderer.scale;
-        const worldX = (this.mouseX - this.canvas.width / 2) / scale + renderer.camX;
-        const worldY = (this.mouseY - this.canvas.height / 2) / scale + renderer.camY;
+        let worldX, worldY;
+
+        if (this.isMobile && this.joystick.distance > 0.1) {
+            // Mobile: Position relative to cell center in world coordinates
+            worldX = renderer.camX + (this.joystick.x / scale) * 5; // Amplified for responsiveness
+            worldY = renderer.camY + (this.joystick.y / scale) * 5;
+        } else if (!this.isMobile) {
+            // Desktop: Position based on screen coordinates
+            worldX = (this.mouseX - this.canvas.width / 2) / scale + renderer.camX;
+            worldY = (this.mouseY - this.canvas.height / 2) / scale + renderer.camY;
+        } else {
+            return; // No movement on mobile if joystick is idle
+        }
 
         const writer = new BinaryWriter();
         writer.writeUInt8(0x10); // Mouse move

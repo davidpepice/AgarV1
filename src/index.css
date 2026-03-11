@@ -709,3 +709,89 @@ input[type="range"]::-webkit-slider-thumb:hover {
 #connecting-overlay.success #connecting-spinner {
     display: none;
 }
+/* --- Mobile Controls --- */
+#touch-controls {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 5;
+}
+
+#joystick-container {
+    position: absolute;
+    bottom: 50px;
+    left: 50px;
+    width: 150px;
+    height: 150px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    pointer-events: auto;
+    touch-action: none;
+}
+
+#joystick-nipple {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 60px;
+    height: 60px;
+    background: var(--accent-color);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 20px rgba(0, 210, 255, 0.4);
+}
+
+#mobile-buttons {
+    position: absolute;
+    bottom: 50px;
+    right: 50px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    pointer-events: auto;
+}
+
+.mobile-btn {
+    width: 80px;
+    height: 80px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: 700;
+    font-size: 0.9rem;
+    user-select: none;
+    touch-action: none;
+    backdrop-filter: blur(5px);
+}
+
+.mobile-btn:active {
+    background: var(--accent-color);
+    transform: scale(0.95);
+}
+
+/* Hide HUD elements on small screens */
+@media (max-width: 768px) {
+    .overlay {
+        min-width: 90%;
+        padding: 1.5rem;
+    }
+    
+    h1 {
+        font-size: 1.8rem;
+    }
+
+    #stats {
+        bottom: 15px;
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 0.8rem;
+    }
+}
