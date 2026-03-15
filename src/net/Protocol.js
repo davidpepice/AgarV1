@@ -78,12 +78,15 @@ export class BinaryReader {
     }
 
     readStringUTF8() {
-        let s = '', b;
-        while (this.has(1) && (b = this.readUInt8()) !== 0) s += String.fromCharCode(b);
+        let bytes = [];
+        let b;
+        while (this.has(1) && (b = this.readUInt8()) !== 0) {
+            bytes.push(b);
+        }
         try {
-            return decodeURIComponent(escape(s));
+            return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
         } catch (e) {
-            return s;
+            return String.fromCharCode.apply(null, bytes);
         }
     }
 }

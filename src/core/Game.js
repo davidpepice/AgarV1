@@ -1,11 +1,15 @@
 import Connection from '../net/Connection.js';
 import Renderer from '../render/Renderer.js';
-import { BinaryWriter, PROTOCOL } from '../net/Protocol.js';
+import PixiRenderer from '../render/PixiRenderer.js';
+import { BinaryWriter, BinaryReader, PROTOCOL } from '../net/Protocol.js';
+import { getSkinList } from '../utils/SkinLoader.js';
 
 class Game {
     constructor() {
         this.canvas = document.getElementById('gameCanvas');
         this.renderer = new Renderer(this);
+        this.pixiRenderer = null; // Created on first toggle
+        this.activeRenderer = this.renderer; // Default to 2D Canvas renderer
         this.connection = new Connection(this);
 
         this.nodes = new Map();
@@ -32,7 +36,7 @@ class Game {
         this.ui = {
             mainMenu: document.getElementById('main-menu'),
             nickname: document.getElementById('nickname'),
-            serverUrl: document.getElementById('server-url'),
+            serverList: document.getElementById('server-list'),
             playBtn: document.getElementById('play-btn'),
             spectateBtn: document.getElementById('spectate-btn'),
             leaderboard: document.getElementById('leaderboard'),
@@ -49,16 +53,13 @@ class Game {
             userCoins: document.getElementById('user-coins'),
             shopGrid: document.getElementById('shop-grid'),
             shopCatBtns: document.querySelectorAll('.shop-cat-btn'),
-            buySelectBtn: document.getElementById('buy-select-btn'),
             previewCanvas: document.getElementById('skin-preview-canvas'),
-            previewName: document.getElementById('preview-name'),
             ping: document.getElementById('ping'),
             hotkeyBtns: document.querySelectorAll('.key-btn'),
-            tabs: document.querySelectorAll('.tab-btn'),
-            tabContents: document.querySelectorAll('.tab-content'),
             connectingOverlay: document.getElementById('connecting-overlay'),
             connectingText: document.getElementById('connecting-text'),
-            connectingSpinner: document.getElementById('connecting-spinner')
+            connectingSpinner: document.getElementById('connecting-spinner'),
+            gpuBtn: document.getElementById('gpu-btn')
         };
 
         this.config = {
@@ -66,6 +67,8 @@ class Game {
             showMass: true,
             noSkins: false,
             darkTheme: true,
+            usePixi: false,
+            noGrid: false,
             animationDelay: 120,
             coins: 5000,
             ownedSkins: [],
@@ -101,19 +104,12 @@ class Game {
             angle: 0
         };
 
+        // Build shop data dynamically from detected skin files
+        const allSkins = getSkinList().map(s => ({ ...s, price: 0, type: 'skin' }));
         this.shopData = {
-            level: [
-                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
-                { id: '52k', name: '52k', price: 0, type: 'skin' },
-            ],
-            owner: [
-                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
-                { id: '52k', name: '52k', price: 0, type: 'skin' },
-            ],
-            premium: [
-                { id: '3ezzy', name: '3ezzy', price: 0, type: 'skin' },
-                { id: '52k', name: '52k', price: 0, type: 'skin' },
-            ],
+            level: allSkins,
+            owner: allSkins,
+            premium: allSkins,
             coins: [
                 { id: 'coins_1000', name: '1000 Coins', price: 0.99, type: 'coins', amount: 1000 },
                 { id: 'coins_5000', name: '5000 Coins', price: 3.99, type: 'coins', amount: 5000 }
@@ -125,8 +121,16 @@ class Game {
         this.pingStart = 0;
         this.pingInterval = null;
 
+        this.servers = [
+            { id: 'local_ffa', name: 'Local FFA', url: this.connection.url, mode: 'FFA', players: '0' },
+            { id: 'local_teams', name: 'Local Teams', url: 'ws://localhost:8081', mode: 'Teams', players: '0' },
+            { id: 'public_1', name: 'Public NA', url: 'ws://127.0.0.1:8082', mode: 'FFA', players: '0' }
+        ];
+        this.currentServerUrl = this.servers[0].url;
+
         this.loadSettings();
         this.init();
+        this.initServers();
     }
 
     loadSettings() {
@@ -135,15 +139,33 @@ class Game {
             if (saved) {
                 const settings = JSON.parse(saved);
                 if (settings.nickname) this.ui.nickname.value = settings.nickname;
-                if (settings.serverUrl) this.ui.serverUrl.value = settings.serverUrl;
+                if (settings.currentServerUrl) this.currentServerUrl = settings.currentServerUrl;
                 if (settings.config) {
                     this.config = { ...this.config, ...settings.config };
                     this.ui.showNames.checked = this.config.showNames;
                     this.ui.showMass.checked = this.config.showMass;
                     this.ui.noSkins.checked = this.config.noSkins || false;
                     this.ui.darkTheme.checked = this.config.darkTheme !== false;
+                    
+                    // Only enable GPU if WebGL is supported
+                    const webglSupported = Game.supportsWebGL();
+                    if (this.config.usePixi && !webglSupported) {
+                        console.warn('[Game] WebGL not supported, disabling GPU mode');
+                        this.config.usePixi = false;
+                    }
+                    
+                    if (this.ui.gpuBtn) {
+                        this.ui.gpuBtn.checked = this.config.usePixi || false;
+                    }
+                    
                     this.ui.animDelay.value = this.config.animationDelay;
                     this.ui.animDelayValue.textContent = this.config.animationDelay;
+
+                    // Initialize PixiRenderer if saved AND WebGL is available
+                    // Don't toggle here - wait for user input in menu
+                    if (this.config.usePixi && webglSupported) {
+                        console.log('[Game] PixiJS will be available when user activates GPU mode');
+                    }
 
                     // Update Hotkey Buttons
                     if (this.config.hotkeys) {
@@ -164,10 +186,10 @@ class Game {
     saveSettings() {
         try {
             const settings = {
-                nickname: this.ui.nickname.value,
-                serverUrl: this.ui.serverUrl.value,
-                config: this.config
-            };
+            nickname: this.ui.nickname.value,
+            currentServerUrl: this.currentServerUrl,
+            config: this.config
+        };
             localStorage.setItem('agarv1_settings', JSON.stringify(settings));
         } catch (e) {
             console.error("Failed to save settings:", e);
@@ -179,6 +201,24 @@ class Game {
         window.addEventListener('resize', () => this.resize());
         this.ui.playBtn.addEventListener('click', () => this.handlePlay());
         this.ui.spectateBtn.addEventListener('click', () => this.handleSpectate());
+
+        // Fullscreen button
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', () => {
+                console.log('[Game] Fullscreen clicked');
+                this.toggleFullscreen();
+            });
+        }
+
+        // Toggle UI button
+        const toggleUiBtn = document.getElementById('toggle-ui-btn');
+        if (toggleUiBtn) {
+            toggleUiBtn.addEventListener('click', () => {
+                console.log('[Game] Toggle UI clicked');
+                this.toggleUI();
+            });
+        }
 
         // Config Bindings
         this.ui.showNames.addEventListener('change', (e) => {
@@ -197,6 +237,29 @@ class Game {
             this.config.darkTheme = e.target.checked;
             this.saveSettings();
         });
+        if (this.ui.gpuBtn) {
+            // Check WebGL support and disable if not available
+            const webglSupported = Game.supportsWebGL();
+            //console.log(`[Game] WebGL Support: ${webglSupported}`);
+            
+            if (!webglSupported) {
+                this.ui.gpuBtn.disabled = true;
+                this.ui.gpuBtn.title = 'WebGL no está soportado en este navegador';
+                this.config.usePixi = false;
+            }
+            
+            this.ui.gpuBtn.addEventListener('change', (e) => {
+                if (!webglSupported) {
+                    e.target.checked = false;
+                    return;
+                }
+                
+                // Toggle GPU mode without page reload
+                this.config.usePixi = e.target.checked;
+                this.saveSettings();
+                this.toggleRenderer(this.config.usePixi);
+            });
+        }
         this.ui.animDelay.addEventListener('input', (e) => {
             this.config.animationDelay = parseInt(e.target.value);
             this.ui.animDelayValue.textContent = e.target.value;
@@ -213,17 +276,14 @@ class Game {
             });
         });
 
-        // Tab Switching
-        this.ui.tabs.forEach(btn => {
-            btn.addEventListener('click', () => {
-                const tabId = btn.dataset.tab;
-                this.ui.tabs.forEach(b => b.classList.toggle('active', b === btn));
-                this.ui.tabContents.forEach(c => c.classList.toggle('active', c.id === tabId));
-                if (tabId === 'tab-shop') {
-                    this.refreshShop();
-                }
+        // Close Modal Events handled inline in HTML via .closest('.modal').classList.remove('active')
+        // However, we should refresh shop if shop tab is opened
+        const openShopBtn = document.querySelector('.shop-mini-panel .btn-secondary');
+        if (openShopBtn) {
+            openShopBtn.addEventListener('click', () => {
+                this.refreshShop();
             });
-        });
+        }
 
         // Shop Category Buttons
         this.ui.shopCatBtns.forEach(btn => {
@@ -232,11 +292,6 @@ class Game {
                 this.ui.shopCatBtns.forEach(b => b.classList.toggle('active', b === btn));
                 this.refreshShop();
             });
-        });
-
-        // Buy/Select Button
-        this.ui.buySelectBtn.addEventListener('click', () => {
-            this.handleShopAction();
         });
 
         window.addEventListener('mousemove', (e) => this.handleMouseMove(e));
@@ -250,8 +305,9 @@ class Game {
 
         if (this.isMobile) {
             this.ui.touchControls = document.getElementById('touch-controls');
-            this.ui.touchControls.style.display = 'block';
+            this.ui.touchControls.style.display = 'block';  // Use classList instead of style
             this.initTouchControls();
+            
         }
 
         this.autoConnect();
@@ -266,15 +322,15 @@ class Game {
 
         const handleTouch = (e) => {
             if (!this.joystick.active) return;
-            const touch = Array.from(e.touches).find(t => t.identifier === this.joystick.touchId);
+            var touch = Array.from(e.touches).find(t => t.identifier === this.joystick.touchId);
             if (!touch) return;
 
             const rect = joystick.getBoundingClientRect();
             const centerX = rect.left + rect.width / 2;
             const centerY = rect.top + rect.height / 2;
 
-            let dx = touch.clientX - centerX;
-            let dy = touch.clientY - centerY;
+            var dx = touch.clientX - centerX;
+            var dy = touch.clientY - centerY;
             const distance = Math.min(Math.sqrt(dx * dx + dy * dy), rect.width / 2);
             const angle = Math.atan2(dy, dx);
 
@@ -298,7 +354,7 @@ class Game {
         window.addEventListener('touchmove', (e) => {
             if (this.joystick.active) {
                 handleTouch(e);
-                // Only prevent default if we found the joystick touch to avoid blocking other elements
+                // Solo se impedirá el comportamiento predeterminado si detectamos que el joystick toca para evitar bloquear otros elementos. 
                 if (Array.from(e.changedTouches).some(t => t.identifier === this.joystick.touchId)) {
                     e.preventDefault();
                 }
@@ -309,10 +365,15 @@ class Game {
             if (this.joystick.active) {
                 const touchEnded = Array.from(e.changedTouches).some(t => t.identifier === this.joystick.touchId);
                 if (touchEnded) {
-                    this.joystick.active = false;
-                    this.joystick.touchId = null;
-                    this.joystick.x = 0;
-                    this.joystick.y = 0;
+                    this.joystick.active = true; // false
+                    this.joystick.touchId = touch.identifier; // null 
+                    const distance = Math.min(Math.sqrt(dx * dx + dy * dy), rect.width / 2);
+                    const angle = Math.atan2(dy, dx);
+
+                    this.joystick.x = Math.cos(angle) * distance;
+                    this.joystick.y = Math.sin(angle) * distance;
+                    //this.joystick.x = 0;
+                    //this.joystick.y = 0;
                     this.joystick.distance = 0;
                     nipple.style.transform = `translate(-50%, -50%)`;
                 }
@@ -344,65 +405,111 @@ class Game {
     }
 
     autoConnect() {
-        const url = this.ui.serverUrl.value || 'ws://localhost:8080';
+        const url = this.currentServerUrl || 'ws://localhost:8080';
         //console.log("Auto-connecting to server...");
         this.showConnecting("Connecting to server...");
         this.connection.connect(url, "Spectator", true);
     }
 
-    showConnecting(message) {
-        this.ui.connectingOverlay.classList.remove('success');
-        this.ui.connectingOverlay.style.display = 'flex';
+    showConnecting(message = "Connecting...") {
         this.ui.connectingText.textContent = message;
+        this.ui.connectingOverlay.classList.remove('success', 'error');
         this.ui.connectingSpinner.style.display = 'block';
+        this.ui.connectingOverlay.style.display = 'flex';
     }
 
     showConnected() {
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
+        this.ui.connectingOverlay.classList.remove('error');
         this.ui.connectingOverlay.classList.add('success');
         this.ui.connectingText.textContent = "Connected!";
         this.ui.connectingSpinner.style.display = 'none';
 
         setTimeout(() => {
-            this.ui.connectingOverlay.style.display = 'none';
-            this.ui.connectingOverlay.classList.remove('success');
-        }, 1000);
+            this.hideConnecting();
+        }, 2000);
+    }
+
+    showConnectionError(url) {
+        this.ui.connectingOverlay.classList.remove('success');
+        this.ui.connectingOverlay.classList.add('error');
+        // Clean up URL for display
+        const cleanUrl = url.replace('ws://', '').replace('wss://', '');
+        const serverName = this.servers.find(s => s.url === url)?.name;
+        this.ui.connectingText.textContent = `Error connecting to '${serverName}'... Retrying in 2s.`;
+        this.ui.connectingSpinner.style.display = 'none';
+        this.ui.connectingOverlay.style.display = 'flex';
+
+        // Schedule auto-reconnect every 2 seconds
+        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = setTimeout(() => {
+            const currentUrlInput = this.currentServerUrl || 'ws://192.168.0.250:8080';
+            this.showConnecting("Reconnecting...");
+            this.connection.connect(currentUrlInput, this.nickname, !this.playing, this.config.selectedSkin);
+        }, 2000);
     }
 
     hideConnecting() {
         this.ui.connectingOverlay.style.display = 'none';
-        this.ui.connectingOverlay.classList.remove('success');
+        this.ui.connectingOverlay.classList.remove('success', 'error');
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
     }
 
     handleWheel(e) {
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        this.renderer.userZoom = Math.max(0.1, Math.min(5.0, this.renderer.userZoom * delta));
+        const delta = e.deltaY > 0 ? 0.9 : 1.1; 
+        this.renderer.userZoom = Math.max(0.9, Math.min(4.5, this.renderer.userZoom * delta));
+         
     }
 
     resize() {
-        this.canvas.width = window.innerWidth;
-        this.canvas.height = window.innerHeight;
-        this.renderer.setSize(this.canvas.width, this.canvas.height);
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        
+        // Update 2D canvas
+        this.canvas.width = width;
+        this.canvas.height = height;
+        this.renderer.setSize(width, height);
+        this.renderer.viewportScale = Math.min(width, height) / 1200;
+        
+        // Update Pixi canvas if exists
+        if (this.pixiRenderer) {
+            // Update Pixi canvas dimensions
+            this.pixiRenderer.canvas.width = width;
+            this.pixiRenderer.canvas.height = height;
+            this.pixiRenderer.canvas.style.width = width + 'px';
+            this.pixiRenderer.canvas.style.height = height + 'px';
+            
+            // Tell PixiRenderer about size change
+            this.pixiRenderer.setSize(width, height);
+            this.pixiRenderer.viewportScale = Math.min(width, height) / 1200;
+        }
     }
 
     handlePlay() {
         const nickname = this.ui.nickname.value || 'Unnamed';
-        const url = this.ui.serverUrl.value || 'ws://localhost:8080';
+        //const url = this.currentServerUrl || 'ws://192.168.0.250:8080';
 
         this.renderer.spectateTargetName = ""; // Clear manual spectate
 
         // If connection is not open, show overlay and wait
-        if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) {
+        /*if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) {
             this.showConnecting("Connecting to server...");
             this.connection.connect(url, nickname, false, this.config.selectedSkin);
             return;
-        }
+        }*/
 
         // If already connected but as spectator or different server, update and spawn
-        if (this.connection.url !== url) {
+        /*if (this.connection.url !== url) {
             this.showConnecting("Connecting to server...");
             this.connection.connect(url, nickname, false, this.config.selectedSkin);
             return;
-        }
+        }*/
 
         this.nickname = nickname;
         this.hideMenu();
@@ -412,24 +519,112 @@ class Game {
     }
     handleSpectate() {
         const nickname = this.ui.nickname.value || 'Unnamed';
-        const url = this.ui.serverUrl.value || 'ws://localhost:8080';
+       /* const url = this.currentServerUrl || 'ws://localhost:8080';
 
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
             this.hideMenu();
             this.playing = false;
             this.connection.spectate();
             return;
-        }
+        }*/
 
-        this.showConnecting("Connecting to server...");
+        //this.showConnecting("Connecting to server...");
         this.nickname = nickname;
         this.hideMenu();
         this.playing = false;
 
         this.reset();
         this.saveSettings();
-        this.connection.connect(url, this.nickname, true);
+       // this.connection.connect(url, this.nickname, true);
     }
+
+    toggleFullscreen() {
+        const elem = document.documentElement;
+        
+        if (!document.fullscreenElement) {
+            // Request fullscreen
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(err => console.error('[Game] Fullscreen error:', err));
+            } else if (elem.webkitRequestFullscreen) {
+                elem.webkitRequestFullscreen();
+            } else if (elem.mozRequestFullScreen) {
+                elem.mozRequestFullScreen();
+            } else if (elem.msRequestFullscreen) {
+                elem.msRequestFullscreen();
+            }
+        } else {
+            // Exit fullscreen
+            if (document.exitFullscreen) {
+                document.exitFullscreen().catch(err => console.error('[Game] Exit fullscreen error:', err));
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            } else if (document.msExitFullscreen) {
+                document.msExitFullscreen();
+            }
+        }
+    }
+
+    toggleUI() {
+        const hud = document.getElementById('hud-container');
+        const mainMenu = document.getElementById('main-menu');
+        
+        if (hud) {
+            hud.classList.toggle('hidden-ui');
+        }
+        if (mainMenu && mainMenu.classList.contains('menu-overlay')) {
+            mainMenu.classList.toggle('hidden-ui');
+        }
+    }
+
+    initServers() {
+        if (!this.ui.serverList) return;
+        
+        this.ui.serverList.innerHTML = this.servers.map(server => `
+            <div class="server-item ${server.url === this.currentServerUrl ? 'active' : ''}" data-url="${server.url}">
+                <div class="server-info">
+                    <span class="server-name">${server.name}</span>
+                    <span class="server-mode">${server.mode}</span>
+                </div>
+                <span class="server-players" id="players-${server.url.replace(/\W/g, '')}">${server.players} P</span>
+            </div>
+        `).join('');
+
+        this.ui.serverList.querySelectorAll('.server-item').forEach(el => {
+            el.addEventListener('click', () => {
+                // Update active class UI
+                this.ui.serverList.querySelectorAll('.server-item').forEach(s => s.classList.remove('active'));
+                el.classList.add('active');
+                
+                // Update internal state
+                this.currentServerUrl = el.dataset.url;
+                this.saveSettings();
+            });
+        });
+    }
+
+
+    updateServerStats(stats, url) {
+        // Find the server object and update it
+        const server = this.servers.find(s => s.url === url);
+        if (server) {
+            server.players = stats.playersTotal !== undefined ? stats.playersTotal : server.players;
+            if (stats.mode) server.mode = stats.mode;
+            
+            // Update UI dynamically
+            const playersSpan = document.getElementById(`players-${url.replace(/\W/g, '')}`);
+            if (playersSpan) {
+                playersSpan.textContent = stats.playersTotal === 'Off' ? 'Offline' : `${stats.playersTotal} P`;
+                if (stats.playersTotal === 'Off') {
+                    playersSpan.style.color = '#ff4757';
+                } else {
+                    playersSpan.style.color = '#fff';
+                }
+            }
+        }
+    }
+
     reset() {
         this.clearAll();
         this.serverTime = 0;
@@ -488,7 +683,7 @@ class Game {
         this.ui.shopGrid.innerHTML = items.map(item => {
             const isOwned = this.config.ownedSkins.includes(item.id);
             const isSelected = this.config.selectedSkin === item.id;
-            const imgPath = item.type === 'skin' ? `./skins/${item.id}.png` : './assets/res/noSkin.png';
+            const imgPath = item.type === 'skin' ? (item.url || `./skins/${item.id}.png`) : './assets/res/noSkin.png';
 
             return `
                 <div class="shop-item ${isSelected ? 'selected' : ''}" data-id="${item.id}">
@@ -509,21 +704,31 @@ class Game {
 
     selectPreview(item) {
         this.previewItem = item;
-        this.ui.previewName.textContent = item.name;
 
         const isOwned = this.config.ownedSkins.includes(item.id);
         const isSelected = this.config.selectedSkin === item.id;
 
         if (item.type === 'coins') {
-            this.ui.buySelectBtn.textContent = `Buy for $${item.price}`;
-            this.ui.buySelectBtn.disabled = false;
+            alert(`Mock: Redirecting to payment for ${item.name}`);
+            this.config.coins += item.amount || 1000;
+            this.saveSettings();
+            this.refreshShop();
+            return;
+        }
+
+        if (isOwned) {
+            this.config.selectedSkin = item.id;
+            this.saveSettings();
+            this.refreshShop();
         } else {
-            if (isOwned) {
-                this.ui.buySelectBtn.textContent = isSelected ? 'Selected' : 'Select Skin';
-                this.ui.buySelectBtn.disabled = isSelected;
+            if (this.config.coins >= item.price) {
+                this.config.coins -= item.price;
+                this.config.ownedSkins.push(item.id);
+                this.config.selectedSkin = item.id; // Auto-select on purchase
+                this.saveSettings();
+                this.refreshShop();
             } else {
-                this.ui.buySelectBtn.textContent = `Buy for ${item.price}`;
-                this.ui.buySelectBtn.disabled = this.config.coins < item.price;
+                alert(`Not enough coins! You need ${item.price} coins.`);
             }
         }
 
@@ -556,36 +761,6 @@ class Game {
         } else {
             ctx.fillStyle = '#ffd700';
             ctx.fill();
-        }
-    }
-
-    handleShopAction() {
-        if (!this.previewItem) return;
-        const item = this.previewItem;
-
-        if (item.type === 'coins') {
-            alert(`Mock: Redirecting to payment for ${item.name}`);
-            this.config.coins += item.amount;
-            this.saveSettings();
-            this.refreshShop();
-            return;
-        }
-
-        const isOwned = this.config.ownedSkins.includes(item.id);
-        if (isOwned) {
-            this.config.selectedSkin = item.id;
-            this.saveSettings();
-            this.refreshShop();
-            this.selectPreview(item);
-        } else {
-            if (this.config.coins >= item.price) {
-                this.config.coins -= item.price;
-                this.config.ownedSkins.push(item.id);
-                this.config.selectedSkin = item.id; // Auto-select on purchase
-                this.saveSettings();
-                this.refreshShop();
-                this.selectPreview(item);
-            }
         }
     }
 
@@ -630,7 +805,11 @@ class Game {
 
         if (e.code === 'Escape') {
             const isHidden = this.ui.mainMenu.style.display === 'none';
-            this.ui.mainMenu.style.display = isHidden ? 'flex' : 'none';
+            if (isHidden) {
+                this.ui.mainMenu.style.display = 'flex';
+            } else {
+                this.hideMenu();
+            }
             return;
         }
 
@@ -686,7 +865,7 @@ class Game {
         if (this.macroInterval) return;
         this.macroInterval = setInterval(() => {
             this.connection.send(new Uint8Array([21]));
-        }, 40);
+        }, 10);
     }
 
     stopMacroFeed() {
@@ -700,7 +879,7 @@ class Game {
         if (!this.connection.ws || this.connection.ws.readyState !== WebSocket.OPEN) return;
         if (this.isFrozen || (this.ui.mainMenu.style.display !== 'none' && !this.isMobile)) return;
 
-        const renderer = this.renderer;
+        const renderer = this.activeRenderer || this.renderer;
         const scale = renderer.scale;
         let worldX, worldY;
 
@@ -839,6 +1018,145 @@ class Game {
         this.connection.send(writer.build());
     }
 
+    toggleRenderer(usePixi) {
+        if (usePixi && !this.activeRenderer.constructor.name.includes('Pixi')) {
+            // Switch TO PixiJS
+            try {
+                if (!this.pixiRenderer) {
+                    console.log('[Renderer] Initializing PixiJS v8...');
+                    this.pixiRenderer = new PixiRenderer(this);
+                    
+                    // Copy camera state from Canvas renderer
+                    this.pixiRenderer.camX = this.renderer.camX;
+                    this.pixiRenderer.camY = this.renderer.camY;
+                    this.pixiRenderer.scale = this.renderer.scale;
+                    this.pixiRenderer.target = { ...this.renderer.target };
+                }
+                
+                // Wait for initialization with timeout
+                const maxAttempts = 50; // 5 seconds max (50 * 100ms)
+                let attempts = 0;
+                
+                const checkReady = setInterval(() => {
+                    attempts++;
+                    
+                    if (this.pixiRenderer.ready) {
+                        clearInterval(checkReady);
+                        console.log('[Renderer] Switching to PixiJS');
+                        
+                        // Show Pixi canvas, hide 2D canvas
+                        document.getElementById('gameCanvas').style.display = 'none';
+                        this.pixiRenderer.canvas.style.display = 'block';
+                        
+                        this.activeRenderer = this.pixiRenderer;
+                        this.config.usePixi = true;
+                        this.saveSettings();
+                    } else if (this.pixiRenderer.initError) {
+                        clearInterval(checkReady);
+                        console.error('[Renderer] PixiJS initialization failed:', this.pixiRenderer.initError);
+                        this._fallbackToCanvas();
+                    } else if (attempts >= maxAttempts) {
+                        clearInterval(checkReady);
+                        console.warn('[Renderer] PixiJS initialization timeout');
+                        this._fallbackToCanvas();
+                    }
+                }, 100);
+            } catch (err) {
+                console.error('[Renderer] Error initializing PixiJS:', err);
+                this._fallbackToCanvas();
+            }
+        } else if (!usePixi && this.activeRenderer.constructor.name.includes('Pixi')) {
+            // Switch BACK to Canvas 2D
+            console.log('[Renderer] Switching back to Canvas 2D');
+            
+            try {
+                // Hide Pixi canvas, show 2D canvas
+                if (this.pixiRenderer) {
+                    this.pixiRenderer.canvas.style.display = 'none';
+                    this.pixiRenderer.destroy();
+                }
+            } catch (err) {
+                console.error('[Renderer] Error destroying PixiJS:', err);
+            } finally {
+                this.pixiRenderer = null;
+                document.getElementById('gameCanvas').style.display = 'block';
+                this.activeRenderer = this.renderer;
+                this.config.usePixi = false;
+                this.saveSettings();
+            }
+        }
+    }
+
+    _fallbackToCanvas() {
+        console.warn('[Renderer] Falling back to Canvas 2D renderer');
+        
+        // Cleanup Pixi if it exists
+        if (this.pixiRenderer) {
+            try {
+                this.pixiRenderer.destroy();
+            } catch (e) {}
+            this.pixiRenderer = null;
+        }
+        
+        // Reset to Canvas
+        this.activeRenderer = this.renderer;
+        this.config.usePixi = false;
+        
+        if (this.ui.gpuBtn) {
+            this.ui.gpuBtn.checked = false;
+        }
+        
+        this.saveSettings();
+        
+        // Show warning to user
+        const msg = 'WebGL no soportado en tu navegador. Usando Canvas 2D.';
+        console.warn(msg);
+        if (this.ui.connectingText) {
+            this.ui.connectingText.textContent = msg;
+        }
+    }
+
+    static supportsWebGL() {
+        try {
+            const canvas = document.createElement('canvas');
+            // Try both webgl2 and webgl with power preference
+            let gl = canvas.getContext('webgl2', {
+                failIfMajorPerformanceCaveat: false,
+                powerPreference: 'high-performance'
+            });
+            
+            if (!gl) {
+                gl = canvas.getContext('webgl', {
+                    failIfMajorPerformanceCaveat: false,
+                    powerPreference: 'high-performance'
+                });
+            }
+            
+            if (!gl) {
+                gl = canvas.getContext('experimental-webgl');
+            }
+            
+            const supported = !!gl;
+            
+            // Get WebGL info
+            if (supported && gl) {
+                try {
+                    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (debugInfo) {
+                        const vendor = gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL);
+                        const renderer = gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL);
+                        //console.log(`[Game] WebGL Renderer: ${vendor} / ${renderer}`);
+                    }
+                } catch (e) {}
+            }
+            
+            return supported;
+        } catch (e) {
+            console.error('[Game] WebGL detection error:', e.message);
+            return false;
+        }
+    }
+
     loop(time) {
         if (!this.lastTime) {
             this.lastTime = time;
@@ -852,13 +1170,17 @@ class Game {
         this.frameCount++;
 
         // Actualizar FPS cada 500ms (más estable)
-        if (time - this.fpsLastUpdate >= 500) {
+        if (time - this.fpsLastUpdate >= 100) {
             this.fps = Math.round((this.frameCount * 1000) / (time - this.fpsLastUpdate));
             this.frameCount = 0;
             this.fpsLastUpdate = time;
             this.ui.fps.innerText = `FPS: ${this.fps}`;
         }
-        this.renderer.render();
+        
+        // Use activeRenderer instead of hardcoded this.renderer
+        const rendererToUse = this.activeRenderer || this.renderer;
+        rendererToUse.render();
+
         if (this.nodes.size > 0) {
             let totalMass = 0;
             this.ownIds.forEach(id => {

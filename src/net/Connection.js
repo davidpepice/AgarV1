@@ -5,6 +5,8 @@ export default class Connection {
         this.game = game;
         this.ws = null;
         this.url = '';
+        this.statsLoopId = null;
+        this.statsLoopStamp = 0;
     }
 
     connect(url, nickname, spectate = false, skin = "") {
@@ -16,6 +18,7 @@ export default class Connection {
             this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
             this.ws.close();
         }
+        this.stopStatsLoop(); // Clean up any previous stats poll on reconnect
 
         try {
             this.ws = new WebSocket(url);
@@ -105,9 +108,26 @@ export default class Connection {
                 case 0x63: // CHAT
                     // Handle chat if needed
                     break;
+                case 254: // STATS
+                    this.handleStats(reader);
+                    break;
             }
         } catch (e) {
             // console.error("Parse error packet", packetId, e);
+        }
+    }
+
+    handleStats(reader) {
+        try {
+            const jsonString = reader.readStringUTF8();
+            if (jsonString) {
+                const stats = JSON.parse(jsonString);
+                if (this.game.updateServerStats) {
+                    this.game.updateServerStats(stats, this.url);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to parse server stats JSON", e);
         }
     }
 
@@ -186,26 +206,55 @@ export default class Connection {
         this.game.borders = { l, t, r, b };
 
         // Center camera on first border receipt (Cigar2 style)
-        /* if (!this.game.mapCenterSet) {
-             this.game.mapCenterSet = true;
-             const centerX = (l + r) / 2;
-             const centerY = (t + b) / 2;
-             const renderer = this.game.renderer;
-             renderer.camX = renderer.target.x = centerX;
-             renderer.camY = renderer.target.y = centerY;
-             renderer.scale = renderer.target.scale = 1;
-         }*/
+        if (!this.game.mapCenterSet) {
+            this.game.mapCenterSet = true;
+            const centerX = (l + r) / 2;
+            const centerY = (t + b) / 2;
+            const renderer = this.game.renderer;
+            renderer.camX = renderer.target.x = centerX;
+            renderer.camY = renderer.target.y = centerY;
+            renderer.scale = renderer.target.scale = 1;
+        }
+
+        // Cigar2-style: the 0x41 packet from MultiOgar/OgarII includes
+        // extra bytes after the 4 float64s: a uint32 (game type) + a UTF8 server name.
+        // Only start the stats ping loop once we confirm it's a compatible server.
+        if (reader.has(4) && !this.statsLoopId) {
+            reader.readUInt32(); // game type (unused)
+            const serverName = reader.readStringUTF8();
+            if (/MultiOgar|OgarII/i.test(serverName)) {
+                this.statsLoopId = setInterval(() => {
+                    this.send(new Uint8Array([254])); // Request stats
+                    this.statsLoopStamp = Date.now();
+                }, 2000);
+                // Fire immediately for a faster first update
+                this.send(new Uint8Array([254]));
+                this.statsLoopStamp = Date.now();
+            }
+        }
+    }
+
+    stopStatsLoop() {
+        if (this.statsLoopId) {
+            clearInterval(this.statsLoopId);
+            this.statsLoopId = null;
+        }
     }
 
     onClose() {
-        console.log("Disconnected.");
+        // console.log("Disconnected.");
+        this.stopStatsLoop();
         this.game.ui.mainMenu.style.display = 'flex';
+        // Give a slight visual feedback if we suddenly drop while playing
+        if (this.game.playing && this.game.showConnectionError) {
+            this.game.showConnectionError(this.game.servers.name);
+        }
     }
 
     onError(err) {
-        console.error("WebSocket error:", err);
-        if (this.game.hideConnecting) {
-            this.game.hideConnecting();
+        // console.error("WebSocket error:", err);
+        if (this.game.showConnectionError) {
+            this.game.showConnectionError(this.url);
         }
     }
 

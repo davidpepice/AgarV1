@@ -14,7 +14,7 @@ Thumbs.db
 # Production
 dist/
 build/
-
+skin/
 # Environment variables
 .env
 .env.local
