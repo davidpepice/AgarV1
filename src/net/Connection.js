@@ -67,9 +67,19 @@ export default class Connection {
         this.send(writer.build());
     }
 
-    onMessage(msg) {
+    async onMessage(msg) {
         this.game.updatePing();
-        const reader = new BinaryReader(new DataView(msg.data));
+        
+        // Ensure data is ArrayBuffer (it might be Blob if binaryType failed or was changed)
+        let data = msg.data;
+        if (data instanceof Blob) {
+            data = await data.arrayBuffer();
+        } else if (!(data instanceof ArrayBuffer)) {
+            // console.warn("Received non-binary message:", data);
+            return;
+        }
+
+        const reader = new BinaryReader(new DataView(data));
         const packetId = reader.readUInt8();
         try {
             switch (packetId) {

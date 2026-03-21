@@ -3,6 +3,7 @@ import Renderer from '../render/Renderer.js';
 import PixiRenderer from '../render/PixiRenderer.js';
 import { BinaryWriter, BinaryReader, PROTOCOL } from '../net/Protocol.js';
 import { getSkinList } from '../utils/SkinLoader.js';
+import ShopAPI from '../api/ShopAPI.js';
 
 class Game {
     constructor() {
@@ -104,17 +105,14 @@ class Game {
             angle: 0
         };
 
-        // Build shop data dynamically from detected skin files
-        const allSkins = getSkinList().map(s => ({ ...s, price: 0, type: 'skin' }));
+        // Build shop data dynamically from API
         this.shopData = {
-            level: allSkins,
-            owner: allSkins,
-            premium: allSkins,
-            coins: [
-                { id: 'coins_1000', name: '1000 Coins', price: 0.99, type: 'coins', amount: 1000 },
-                { id: 'coins_5000', name: '5000 Coins', price: 3.99, type: 'coins', amount: 5000 }
-            ]
+            level: [],
+            owner: [],
+            premium: [],
+            coins: []
         };
+        this.loadShopData();
 
         this.currentShopCategory = 'level';
         this.previewItem = null;
@@ -138,44 +136,63 @@ class Game {
             const saved = localStorage.getItem('agarv1_settings');
             if (saved) {
                 const settings = JSON.parse(saved);
-                if (settings.nickname) this.ui.nickname.value = settings.nickname;
-                if (settings.currentServerUrl) this.currentServerUrl = settings.currentServerUrl;
+                
+                // 1. Nickname
+                if (settings.nickname) {
+                    this.ui.nickname.value = settings.nickname;
+                    this.nickname = settings.nickname;
+                }
+                
+                // 2. Server
+                if (settings.currentServerUrl) {
+                    this.currentServerUrl = settings.currentServerUrl;
+                }
+                
+                // 3. Config (Deep Merge for Hotkeys)
                 if (settings.config) {
-                    this.config = { ...this.config, ...settings.config };
-                    this.ui.showNames.checked = this.config.showNames;
-                    this.ui.showMass.checked = this.config.showMass;
-                    this.ui.noSkins.checked = this.config.noSkins || false;
-                    this.ui.darkTheme.checked = this.config.darkTheme !== false;
+                    const savedConfig = settings.config;
                     
-                    // Only enable GPU if WebGL is supported
-                    const webglSupported = Game.supportsWebGL();
-                    if (this.config.usePixi && !webglSupported) {
-                        console.warn('[Game] WebGL not supported, disabling GPU mode');
-                        this.config.usePixi = false;
+                    // Basic properties
+                    for (const key in savedConfig) {
+                        if (key !== 'hotkeys' && savedConfig[key] !== undefined) {
+                            this.config[key] = savedConfig[key];
+                        }
                     }
                     
+                    // Hotkeys (Merge individually to avoid losing new ones)
+                    if (savedConfig.hotkeys) {
+                        for (const action in savedConfig.hotkeys) {
+                            this.config.hotkeys[action] = savedConfig.hotkeys[action];
+                        }
+                    }
+
+                    // 4. Update UI to match loaded config
+                    this.ui.showNames.checked = this.config.showNames;
+                    this.ui.showMass.checked = this.config.showMass;
+                    this.ui.noSkins.checked = this.config.noSkins;
+                    this.ui.darkTheme.checked = this.config.darkTheme;
+                    
+                    const webglSupported = Game.supportsWebGL();
                     if (this.ui.gpuBtn) {
-                        this.ui.gpuBtn.checked = this.config.usePixi || false;
+                        if (!webglSupported) {
+                            this.ui.gpuBtn.checked = false;
+                            this.ui.gpuBtn.disabled = true;
+                            this.config.usePixi = false;
+                        } else {
+                            this.ui.gpuBtn.checked = this.config.usePixi;
+                        }
                     }
                     
                     this.ui.animDelay.value = this.config.animationDelay;
                     this.ui.animDelayValue.textContent = this.config.animationDelay;
 
-                    // Initialize PixiRenderer if saved AND WebGL is available
-                    // Don't toggle here - wait for user input in menu
-                    if (this.config.usePixi && webglSupported) {
-                        console.log('[Game] PixiJS will be available when user activates GPU mode');
-                    }
-
-                    // Update Hotkey Buttons
-                    if (this.config.hotkeys) {
-                        this.ui.hotkeyBtns.forEach(btn => {
-                            const action = btn.dataset.action;
-                            if (this.config.hotkeys[action]) {
-                                btn.textContent = this.config.hotkeys[action].replace('Key', '').replace('Digit', '');
-                            }
-                        });
-                    }
+                    // Update Hotkey Buttons Text
+                    this.ui.hotkeyBtns.forEach(btn => {
+                        const action = btn.dataset.action;
+                        if (this.config.hotkeys[action]) {
+                            btn.textContent = this.config.hotkeys[action].replace('Key', '').replace('Digit', '');
+                        }
+                    });
                 }
             }
         } catch (e) {
@@ -201,6 +218,12 @@ class Game {
         window.addEventListener('resize', () => this.resize());
         this.ui.playBtn.addEventListener('click', () => this.handlePlay());
         this.ui.spectateBtn.addEventListener('click', () => this.handleSpectate());
+
+        // Nickname auto-save
+        this.ui.nickname.addEventListener('input', () => {
+            this.nickname = this.ui.nickname.value;
+            this.saveSettings();
+        });
 
         // Fullscreen button
         const fullscreenBtn = document.getElementById('fullscreen-btn');
@@ -464,7 +487,9 @@ class Game {
     handleWheel(e) {
         const delta = e.deltaY > 0 ? 0.9 : 1.1; 
         this.renderer.userZoom = Math.max(0.9, Math.min(4.5, this.renderer.userZoom * delta));
-         
+        if (this.pixiRenderer) {
+            this.pixiRenderer.userZoom = this.renderer.userZoom;
+        }
     }
 
     resize() {
@@ -669,6 +694,15 @@ class Game {
         }, 2000);
     }
 
+    async loadShopData() {
+        try {
+            this.shopData = await ShopAPI.getShopData();
+            console.log('[Game] Shop data loaded from API:', this.shopData);
+        } catch (e) {
+            console.error("[Game] Failed to load shop data:", e);
+        }
+    }
+
     updatePing() {
         if (this.pingStart === 0) return;
         const ping = Math.round(performance.now() - this.pingStart);
@@ -702,37 +736,44 @@ class Game {
         });
     }
 
-    selectPreview(item) {
+    async selectPreview(item) {
         this.previewItem = item;
 
         const isOwned = this.config.ownedSkins.includes(item.id);
-        const isSelected = this.config.selectedSkin === item.id;
-
-        if (item.type === 'coins') {
-            alert(`Mock: Redirecting to payment for ${item.name}`);
-            this.config.coins += item.amount || 1000;
-            this.saveSettings();
-            this.refreshShop();
-            return;
-        }
 
         if (isOwned) {
             this.config.selectedSkin = item.id;
             this.saveSettings();
             this.refreshShop();
-        } else {
-            if (this.config.coins >= item.price) {
-                this.config.coins -= item.price;
-                this.config.ownedSkins.push(item.id);
-                this.config.selectedSkin = item.id; // Auto-select on purchase
-                this.saveSettings();
-                this.refreshShop();
-            } else {
-                alert(`Not enough coins! You need ${item.price} coins.`);
-            }
+            this.drawPreview(item);
+            return;
         }
 
-        this.drawPreview(item);
+        // Call ShopAPI for purchase
+        try {
+            const result = await ShopAPI.purchaseItem(item, this.config.coins);
+            
+            if (result.success) {
+                if (item.type === 'coins') {
+                    this.config.coins += result.coinsAdded;
+                    alert(`Success! Added ${result.coinsAdded} coins.`);
+                } else {
+                    this.config.coins -= result.coinsDeducted;
+                    this.config.ownedSkins.push(result.itemId);
+                    this.config.selectedSkin = result.itemId;
+                    alert(`Purchased ${item.name}!`);
+                }
+                
+                this.saveSettings();
+                this.refreshShop();
+                this.drawPreview(item);
+            } else {
+                alert(result.error || "Purchase failed.");
+            }
+        } catch (e) {
+            console.error("[Game] Purchase error:", e);
+            alert("An error occurred during purchase.");
+        }
     }
 
     drawPreview(item) {

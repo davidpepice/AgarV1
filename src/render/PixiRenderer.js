@@ -6,7 +6,8 @@ import {
     Texture,
     Assets,
     Text,
-    TextStyle
+    TextStyle,
+    Color
 } from "pixi.js";
 
 /**
@@ -39,7 +40,7 @@ export default class PixiRenderer {
         this.camY = 0;
         this.target = { x: 0, y: 0, scale: 1 };
         this.scale = 1;
-        this.userZoom = 1;
+        this.userZoom = 2.5; // Sync with Renderer.js
         this.viewportScale = 1;
         this.serverCamera = true;
         this.spectateTargetName = "";
@@ -55,7 +56,7 @@ export default class PixiRenderer {
         this.world = null;
         this.ready = false;
         this.initializing = false;
-        this.initError = null; // Store initialization error
+        this.initError = null;
 
         this._initPixi();
     }
@@ -71,8 +72,6 @@ export default class PixiRenderer {
             this.app = new Application();
             const dpr = window.devicePixelRatio || 1;
 
-            // Initialize with the existing canvas element
-            // Let PixiJS auto-detect the best renderer (WebGL fallback to Canvas)
             await this.app.init({
                 canvas: this.canvas,
                 width: this.width,
@@ -81,42 +80,40 @@ export default class PixiRenderer {
                 antialias: true,
                 resolution: dpr,
                 autoDensity: true,
-                preference: "auto"  // Auto-detect, don't force webgl
+                autoStart: false, // We control rendering in Game.loop
+                preference: "webgpu"  // Try WebGPU first, fall back to WebGL
             });
 
-            const rendererType = this.app.renderer.type === 'webgl' ? 'WebGL' : 'Canvas';
-            console.log(`[PixiRenderer] PixiJS initialized successfully (${rendererType})`);
+            console.log(`[PixiRenderer] PixiJS initialized (${this.app.renderer.constructor.name})`);
 
-            // Create rendering layers
+            // Layers
             this.world = new Container();
             this.app.stage.addChild(this.world);
 
             this.gridGfx = new Graphics();
             this.borderGfx = new Graphics();
             this.nodeLayer = new Container();
+            this.uiLayer = new Container(); // For arrow, etc.
 
             this.world.addChild(this.gridGfx);
             this.world.addChild(this.borderGfx);
             this.world.addChild(this.nodeLayer);
+            this.world.addChild(this.uiLayer);
 
-            // Load virus texture
+            // Pre-load virus texture
             try {
                 this.virusTexture = await Assets.load("./assets/res/virus.png");
-                console.log('[PixiRenderer] Virus texture loaded');
             } catch (err) {
-                console.warn('[PixiRenderer] Could not load virus texture:', err.message);
+                console.warn('[PixiRenderer] Virus texture load failed:', err);
             }
 
             this.ready = true;
             this.initializing = false;
-            console.log('[PixiRenderer] Ready for rendering');
         } catch (err) {
             this.initError = err.message || String(err);
-            console.error('[PixiRenderer] Initialization error:', err);
+            console.error('[PixiRenderer] Init error:', err);
             this.ready = false;
             this.initializing = false;
-
-            // Don't rethrow - let the caller handle it via polling
         }
     }
 
@@ -124,88 +121,21 @@ export default class PixiRenderer {
         this.width = w;
         this.height = h;
 
-        const dpr = window.devicePixelRatio || 1;
-
-        // Update canvas resolution
-        this.canvas.width = w * dpr;
-        this.canvas.height = h * dpr;
-        this.canvas.style.width = w + 'px';
-        this.canvas.style.height = h + 'px';
-
-        // Resize Pixi renderer
         if (this.app && this.app.renderer) {
-            try {
-                this.app.renderer.resize(w * dpr, h * dpr);
-                console.log(`[PixiRenderer] Resized to ${w}x${h}`);
-            } catch (err) {
-                console.error('[PixiRenderer] Resize error:', err);
-            }
+            this.app.renderer.resize(w, h);
         }
     }
 
     destroy() {
-        try {
-            console.log('[PixiRenderer] Destroying PixiJS instance...');
-
-            // Clear caches first
-            this.skinCache.clear();
-            this.nodeGfxMap.clear();
-
-            // Safely destroy children
-            if (this.world) {
-                try {
-                    this.world.removeChildren();
-                    this.world.destroy({ children: true });
-                } catch (err) {
-                    console.warn('[PixiRenderer] Error destroying world:', err);
-                }
-                this.world = null;
-            }
-
-            // Safely destroy graphics
-            [this.gridGfx, this.borderGfx, this.nodeLayer].forEach(gfx => {
-                if (gfx) {
-                    try {
-                        gfx.destroy({ children: true });
-                    } catch (err) {
-                        console.warn('[PixiRenderer] Error destroying graphics:', err);
-                    }
-                }
-            });
-
-            // Safely destroy app last
-            if (this.app) {
-                try {
-                    // Minimal destroy - avoid internal issues
-                    if (this.app.stage) {
-                        this.app.stage.removeChildren();
-                    }
-                    if (this.app.renderer) {
-                        this.app.renderer.destroy(false);
-                    }
-                } catch (err) {
-                    console.warn('[PixiRenderer] Warning during app cleanup:', err.message);
-                }
-                this.app = null;
-            }
-
-            // Remove canvas from DOM
-            if (this.canvas && this.canvas.parentNode) {
-                try {
-                    this.canvas.parentNode.removeChild(this.canvas);
-                } catch (err) {
-                    console.warn('[PixiRenderer] Error removing canvas from DOM:', err);
-                }
-            }
-
-            this.ready = false;
-            console.log('[PixiRenderer] Destroyed successfully');
-        } catch (err) {
-            console.error('[PixiRenderer] Error during destroy:', err);
-            // Force cleanup
+        this.ready = false;
+        if (this.app) {
+            this.app.destroy(true, { children: true, texture: false, baseTexture: false });
             this.app = null;
-            this.world = null;
-            this.ready = false;
+        }
+        this.nodeGfxMap.clear();
+        this.skinCache.clear();
+        if (this.canvas.parentNode) {
+            this.canvas.parentNode.removeChild(this.canvas);
         }
     }
 
@@ -215,7 +145,6 @@ export default class PixiRenderer {
 
         this.game.nodes.forEach(node => {
             const dt = Math.min((now - node.lastUpdate) / animDelay, 1);
-
             node.x = node.startX + (node.targetX - node.startX) * dt;
             node.y = node.startY + (node.targetY - node.startY) * dt;
             node.size = node.startSize + (node.targetSize - node.startSize) * dt;
@@ -223,315 +152,374 @@ export default class PixiRenderer {
     }
 
     updateCamera() {
-        if (!this.app || !this.world) return;
-
         const playerNodes = Array.from(this.game.nodes.values()).filter(n =>
             this.game.ownIds.includes(n.id) && !n.destroyed
         );
 
         if (playerNodes.length > 0) {
-            let avgX = 0;
-            let avgY = 0;
-            let sumSize = 0;
-
+            let avgX = 0, avgY = 0, sumSize = 0;
             playerNodes.forEach(n => {
-                avgX += n.x;
-                avgY += n.y;
-                sumSize += n.size;
+                avgX += n.x; avgY += n.y; sumSize += n.size;
             });
-
             this.target.x = avgX / playerNodes.length;
             this.target.y = avgY / playerNodes.length;
-
             const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
             this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+        } else if (this.spectateTargetName) {
+            const targets = Array.from(this.game.nodes.values()).filter(n => n.name === this.spectateTargetName && !n.destroyed);
+            if (targets.length > 0) {
+                let avgX = 0, avgY = 0, sumSize = 0;
+                targets.forEach(n => { avgX += n.x; avgY += n.y; sumSize += n.size; });
+                this.target.x = avgX / targets.length;
+                this.target.y = avgY / targets.length;
+                const sizeScale = Math.pow(Math.min(64 / sumSize, 1), 0.4);
+                this.target.scale = sizeScale * this.viewportScale * this.userZoom;
+            }
         }
 
-        const lerpFactor = 0.1;
-        const w = this.app.renderer.width || this.width;
-        const h = this.app.renderer.height || this.height;
-
+        const lerpFactor = 0.05;
         this.camX += (this.target.x - this.camX) * lerpFactor;
         this.camY += (this.target.y - this.camY) * lerpFactor;
         this.scale += (this.target.scale - this.scale) * 0.05;
 
-        this.world.x = w / 2 - this.camX * this.scale;
-        this.world.y = h / 2 - this.camY * this.scale;
-        this.world.scale.set(this.scale);
+        if (this.world) {
+            this.world.x = this.width / 2;
+            this.world.y = this.height / 2;
+            this.world.scale.set(this.scale);
+            this.world.pivot.set(this.camX, this.camY);
+        }
     }
 
     render() {
-        if (!this.ready || !this.app) {
-            return;
+        if (!this.ready || !this.app) return;
+
+        this.interpolateNodes();
+        this.updateCamera();
+
+        const isDark = this.game.config.darkTheme;
+        this.app.renderer.background.color = isDark ? 0x111111 : 0xf2fbff;
+
+        this._drawGrid(isDark);
+        this._drawBorders(isDark);
+        this._drawNodes();
+        
+        if (this.game.isMobile || this.game.joystick.active) {
+            this._drawDirectionArrow();
+        } else if (this.uiLayer) {
+            this.uiLayer.removeChildren();
         }
 
-        try {
-            this.interpolateNodes();
-            this.updateCamera();
-
-            const isDark = this.game.config.darkTheme;
-            this.app.renderer.background.color = isDark ? 0x111111 : 0xf2fbff;
-
-            this._drawGrid(isDark);
-            this._drawBorders();
-            this._drawNodes();
-
-            this.app.render();
-        } catch (err) {
-            console.error('[PixiRenderer] Render error:', err);
-        }
+        this.app.render();
     }
 
     _drawGrid(isDark) {
-        if (!this.gridGfx) return;
-
         const g = this.gridGfx;
         g.clear();
-
         g.setStrokeStyle({
-            width: 1 / this.scale,
+            width: 1,
             color: isDark ? 0x222222 : 0xd7e8f0
         });
 
+        const margin = 100 / this.scale;
         const halfW = (this.width / 2) / this.scale;
         const halfH = (this.height / 2) / this.scale;
-
-        const left = this.camX - halfW;
-        const top = this.camY - halfH;
-        const right = this.camX + halfW;
-        const bot = this.camY + halfH;
+        const left = this.camX - halfW - margin;
+        const right = this.camX + halfW + margin;
+        const top = this.camY - halfH - margin;
+        const bot = this.camY + halfH + margin;
 
         const gs = this.gridSize;
-
         for (let x = Math.floor(left / gs) * gs; x < right; x += gs) {
-            g.moveTo(x, top);
-            g.lineTo(x, bot);
+            g.moveTo(x, top).lineTo(x, bot);
         }
-
         for (let y = Math.floor(top / gs) * gs; y < bot; y += gs) {
-            g.moveTo(left, y);
-            g.lineTo(right, y);
+            g.moveTo(left, y).lineTo(right, y);
         }
+        g.stroke();
     }
 
-    _drawBorders() {
-        if (!this.borderGfx) return;
-
+    _drawBorders(isDark) {
         const b = this.game.borders;
         if (!b) return;
-
         const g = this.borderGfx;
         g.clear();
-
-        const isDark = this.game.config.darkTheme;
-
         g.setStrokeStyle({
-            width: 15 / this.scale,
+            width: 15,
             color: isDark ? 0xffffff : 0x222222
         });
-
         g.rect(b.l, b.t, b.r - b.l, b.b - b.t);
         g.stroke();
     }
 
     _drawNodes() {
-        if (!this.nodeLayer) return;
+        const nodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
+        const margin = 100 / this.scale;
+        const halfW = (this.width / 2) / this.scale;
+        const halfH = (this.height / 2) / this.scale;
+        const viewL = this.camX - halfW - margin;
+        const viewR = this.camX + halfW + margin;
+        const viewT = this.camY - halfH - margin;
+        const viewB = this.camY + halfH + margin;
 
-        try {
-            const nodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
-            const noSkins = this.game.config.noSkins;
+        const noSkins = this.game.config.noSkins;
+        const now = Date.now();
+        const liveIds = new Set();
 
-            const liveIds = new Set();
-
-            for (const node of nodes) {
-                liveIds.add(node.id);
-                this._drawNode(node, 1, noSkins);
+        for (const node of nodes) {
+            // Viewport Culling
+            if (node.x + node.size < viewL || node.x - node.size > viewR ||
+                node.y + node.size < viewT || node.y - node.size > viewB) {
+                // If offscreen, we might want to hide existing gfx
+                const existing = this.nodeGfxMap.get(node.id);
+                if (existing) existing.visible = false;
+                continue;
             }
 
-            // Cleanup removed nodes
-            for (const [id] of this.nodeGfxMap) {
-                if (!liveIds.has(id)) {
+            if (node.size < 1 && !node.destroyed) continue;
+
+            liveIds.add(node.id);
+            this._drawNode(node, now, noSkins);
+        }
+
+        // Cleanup
+        for (const [id, container] of this.nodeGfxMap) {
+            if (!liveIds.has(id)) {
+                const node = this.game.nodes.get(id);
+                if (!node || (now - node.dead > 120)) {
                     this._removeNodeGfx(id);
+                } else {
+                    // Fade out destroyed node
+                    const alpha = Math.max(120 - (now - node.dead), 0) / 100;
+                    container.alpha = alpha;
                 }
             }
-        } catch (err) {
-            console.error('[PixiRenderer] Error drawing nodes:', err);
         }
     }
 
-    _removeNodeGfx(id) {
-        try {
-            const container = this.nodeGfxMap.get(id);
-
-            if (!container || !this.nodeLayer) return;
-
-            this.nodeLayer.removeChild(container);
-            container.destroy({ children: true });
-
-            this.nodeGfxMap.delete(id);
-        } catch (err) {
-            console.warn('[PixiRenderer] Error removing node:', id, err);
-            this.nodeGfxMap.delete(id);
+    _drawNode(node, now, noSkins) {
+        let container = this.nodeGfxMap.get(node.id);
+        if (!container) {
+            container = new Container();
+            this.nodeLayer.addChild(container);
+            this.nodeGfxMap.set(node.id, container);
         }
-    }
 
-    _drawNode(node, alpha, noSkins) {
-        if (!this.nodeLayer) return;
+        container.visible = true;
+        container.x = node.x;
+        container.y = node.y;
 
-        try {
-            let container = this.nodeGfxMap.get(node.id);
-
-            if (!container) {
-                container = new Container();
-                this.nodeLayer.addChild(container);
-                this.nodeGfxMap.set(node.id, container);
-            }
-
-            container.x = node.x;
-            container.y = node.y;
+        // Alpha logic
+        if (node.destroyed) {
+            const alpha = Math.max(120 - (now - node.dead), 0) / 100;
             container.alpha = alpha;
+        } else {
+            const bornDiff = now - node.born;
+            container.alpha = bornDiff < 100 ? bornDiff / 100 : 1;
+        }
 
-            let gfx = container.children[0];
+        // 1. Body Graphics (Solid Color)
+        let body = container.getChildByName("body");
+        if (!body) {
+            body = new Graphics();
+            body.name = "body";
+            container.addChildAt(body, 0);
+        }
+        
+        // 2. Skin Sprite
+        let skin = container.getChildByName("skin");
+        const skinName = noSkins ? null : node.skin;
 
-            if (!(gfx instanceof Graphics)) {
-                container.removeChildren();
-                gfx = new Graphics();
-                container.addChild(gfx);
+        if (node.jagged) {
+            // Virus logic
+            if (skin) skin.visible = false;
+            body.clear();
+            if (this.virusTexture) {
+                if (!skin || skin.name !== "virus") {
+                    if (skin) container.removeChild(skin);
+                    skin = new Sprite(this.virusTexture);
+                    skin.name = "virus";
+                    skin.anchor.set(0.5);
+                    container.addChildAt(skin, 1);
+                }
+                skin.visible = true;
+                skin.width = skin.height = node.size * 2.1;
+            } else {
+                body.circle(0, 0, node.size).fill(0x33ff33);
+                body.setStrokeStyle({ width: node.size * 0.1, color: 0x33ff33 }).stroke();
+            }
+        } else {
+            // Normal Cell logic
+            if (skin && skin.name === "virus") {
+                container.removeChild(skin);
+                skin = null;
             }
 
-            gfx.clear();
+            body.clear();
+            const color = new Color(node.color || "#00ff22").toNumber();
+            body.circle(0, 0, node.size).fill(color);
 
-            const colorHex = this._cssColorToHex(node.color || "#00ff22");
-
-            gfx.circle(0, 0, node.size);
-            gfx.fill(colorHex);
-
-            if (node.size > 20 && !node.jagged && !node.ejected) {
-                this._drawNodeText(container, node);
+            if (skinName) {
+                this._applySkin(container, skinName, node.size);
+            } else if (skin) {
+                skin.visible = false;
             }
-        } catch (err) {
-            console.warn('[PixiRenderer] Error drawing node:', node.id, err);
+        }
+
+        // 3. Text
+        if (node.size > 20 && !node.jagged && !node.ejected) {
+            this._drawNodeText(container, node);
+        } else {
+            const label = container.getChildByName("label");
+            if (label) label.visible = false;
         }
     }
 
-    _drawNodeText(container, node) {
-        try {
-            const showName = this.game.config.showNames && node.name;
-            const showMass = this.game.config.showMass;
-
-            if (!showName && !showMass) return;
-
-            let label = container.getChildByName("label");
-
-            let textContent = "";
-
-            if (showName) {
-                const cleanName = Game_parseName(node.name);
-                textContent += cleanName;
+    async _applySkin(container, name, size) {
+        let skin = container.getChildByName("skin");
+        const texture = await this._getSkinTexture(name);
+        
+        if (texture) {
+            if (!skin) {
+                skin = new Sprite(texture);
+                skin.name = "skin";
+                skin.anchor.set(0.5);
+                container.addChildAt(skin, 1);
+            } else {
+                skin.texture = texture;
             }
-
-            if (showMass) {
-                const mass = Math.floor((node.size * node.size) / 100);
-                if (textContent) textContent += "\n";
-                textContent += mass;
+            skin.visible = true;
+            skin.width = skin.height = size * 2;
+            
+            // Mask skin to circle
+            let mask = container.getChildByName("skinMask");
+            if (!mask) {
+                mask = new Graphics();
+                mask.name = "skinMask";
+                container.addChild(mask);
+                skin.mask = mask;
             }
-
-            if (!label) {
-                label = new Text({
-                    text: textContent,
-                    style: {
-                        fontFamily: "Inter, sans-serif",
-                        fontWeight: "bold",
-                        fill: "#ffffff",
-                        stroke: "#000000",
-                        strokeThickness: 3,
-                        align: "center"
-                    }
-                });
-
-                label.name = "label";
-                label.anchor.set(0.5);
-
-                container.addChild(label);
-            }
-            else {
-                label.text = textContent;
-            }
-
-            const targetW = node.size;
-            const scale = targetW / Math.max(label.width, 1);
-
-            label.scale.set(Math.min(scale, 1));
-        } catch (err) {
-            console.warn('[PixiRenderer] Error drawing node text:', node.id, err);
+            mask.clear().circle(0, 0, size).fill(0xffffff);
+        } else if (skin) {
+            skin.visible = false;
         }
     }
 
-    _getSkinTexture(name) {
+    async _getSkinTexture(name) {
+        if (!name) return null;
+        name = name.toLowerCase().trim();
+        if (this.skinCache.has(name)) return this.skinCache.get(name);
+
         try {
-            if (!name) return null;
-
-            name = name.toLowerCase().trim();
-
-            if (this.skinCache.has(name))
-                return this.skinCache.get(name);
-
-            const texture = Texture.from(`./skins/${name}.png`);
-            this.skinCache.set(name, texture);
-
-            return texture;
-        } catch (err) {
-            console.warn('[PixiRenderer] Error loading skin texture:', name, err);
+            const tex = await Assets.load(`./skins/${name}.png`);
+            this.skinCache.set(name, tex);
+            return tex;
+        } catch (e) {
+            // Fallback to error skin if needed, or just return null
             return null;
         }
     }
 
-    getSkin(name) {
-        if (!name) return null;
-
-        name = name.toLowerCase().trim();
-
-        if (this._imgCache) {
-            if (this._imgCache.has(name))
-                return this._imgCache.get(name);
-        } else {
-            this._imgCache = new Map();
+    _drawNodeText(container, node) {
+        const showName = this.game.config.showNames && node.name;
+        const showMass = this.game.config.showMass;
+        if (!showName && !showMass) {
+            const label = container.getChildByName("label");
+            if (label) label.visible = false;
+            return;
         }
 
-        const img = new Image();
-        img.src = `./skins/${name}.png`;
+        let label = container.getChildByName("label");
+        let textContent = "";
+        if (showName) textContent += Game_parseName(node.name);
+        if (showMass) {
+            const mass = Math.floor((node.size * node.size) / 100);
+            if (textContent) textContent += "\n";
+            textContent += mass;
+        }
 
-        this._imgCache.set(name, img);
+        if (!label) {
+            label = new Text({
+                text: textContent,
+                style: {
+                    fontFamily: "Inter, sans-serif",
+                    fontWeight: "bold",
+                    fill: "#ffffff",
+                    stroke: { color: "#000000", width: 4 },
+                    align: "center",
+                    fontSize: 40
+                }
+            });
+            label.name = "label";
+            label.anchor.set(0.5);
+            container.addChild(label);
+        } else {
+            label.text = textContent;
+            label.visible = true;
+        }
 
-        return img;
+        const targetW = node.size * 1.2;
+        const scale = targetW / label.width;
+        label.scale.set(Math.min(scale, 1));
     }
 
-    _cssColorToHex(css) {
-        try {
-            if (!css) return 0x00ff22;
-
-            if (css.startsWith("#"))
-                return parseInt(css.slice(1), 16);
-
-            const m = css.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/);
-
-            if (m)
-                return (parseInt(m[1]) << 16) |
-                    (parseInt(m[2]) << 8) |
-                    parseInt(m[3]);
-
-            return 0x00ff22;
-        } catch (err) {
-            console.warn('[PixiRenderer] Error parsing color:', css, err);
-            return 0x00ff22;
+    _removeNodeGfx(id) {
+        const container = this.nodeGfxMap.get(id);
+        if (container) {
+            container.destroy({ children: true });
+            this.nodeGfxMap.delete(id);
         }
+    }
+
+    _drawDirectionArrow() {
+        if (!this.uiLayer) return;
+
+        const playerNodes = Array.from(this.game.nodes.values()).filter(n =>
+            this.game.ownIds.includes(n.id) && !n.destroyed
+        );
+
+        if (playerNodes.length === 0) {
+            this.uiLayer.removeChildren();
+            return;
+        }
+
+        let avgX = 0, avgY = 0, maxDist = 0;
+        playerNodes.forEach(n => {
+            avgX += n.x; avgY += n.y;
+        });
+        avgX /= playerNodes.length;
+        avgY /= playerNodes.length;
+
+        playerNodes.forEach(n => {
+            const d = Math.sqrt((n.x - avgX) ** 2 + (n.y - avgY) ** 2) + n.size;
+            if (d > maxDist) maxDist = d;
+        });
+
+        let arrow = this.uiLayer.getChildByName("arrow");
+        if (!arrow) {
+            arrow = new Graphics();
+            arrow.name = "arrow";
+            this.uiLayer.addChild(arrow);
+        }
+
+        arrow.clear();
+        const baseArrowSize = 18;
+        const arrowSize = baseArrowSize / this.scale;
+        const dist = maxDist + (15 / this.scale);
+
+        arrow.setStrokeStyle({ width: 0, color: 0xffffff });
+        arrow.moveTo(dist + arrowSize, 0)
+             .lineTo(dist, arrowSize / 1.5)
+             .lineTo(dist, -arrowSize / 1.5)
+             .closePath()
+             .fill({ color: 0xffffff, alpha: 0.45 });
+
+        arrow.x = avgX;
+        arrow.y = avgY;
+        arrow.rotation = this.game.joystick.angle;
     }
 }
 
 function Game_parseName(name) {
     if (!name) return "";
-
-    const match = name.match(/^<[^>]*>(.*)/);
-
-    return match ? match[1] : name;
+    return name.replace(/^(\{[^}]*\}|<[^>]*>)+/, '').trim();
 }
