@@ -10,26 +10,43 @@ export default class Connection {
     }
 
     connect(url, nickname, spectate = false, skin = "") {
+        console.log(`[Connection] Attempting to connect to: ${url} (Spectate: ${spectate}, Nick: ${nickname})`);
         this.url = url;
         this.initialSkin = skin;
-        //console.log(`Connecting to ${url}...`);
 
         if (this.ws) {
+            console.log(`[Connection] Closing existing WebSocket to ${this.ws.url}`);
             this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
             this.ws.close();
         }
-        this.stopStatsLoop(); // Clean up any previous stats poll on reconnect
+        //this.stopStatsLoop(); 
+        
+        // Clear any reconnection timer from previous server
+        if (this.game.reconnectTimeout) {
+            console.log('[Connection] Clearing old reconnect timeout');
+            clearTimeout(this.game.reconnectTimeout);
+            this.game.reconnectTimeout = null;
+        }
 
         try {
             this.ws = new WebSocket(url);
             this.ws.binaryType = 'arraybuffer';
 
-            this.ws.onopen = () => this.onOpen(nickname, spectate);
+            this.ws.onopen = () => {
+                console.log(`[Connection] WebSocket opened: ${url}`);
+                this.onOpen(nickname, spectate);
+            };
             this.ws.onmessage = (msg) => this.onMessage(msg);
-            this.ws.onclose = () => this.onClose();
-            this.ws.onerror = (err) => this.onError(err);
+            this.ws.onclose = (e) => {
+                console.log(`[Connection] WebSocket closed: ${url}`, e.code, e.reason);
+                this.onClose();
+            };
+            this.ws.onerror = (err) => {
+                console.error(`[Connection] WebSocket error: ${url}`, err);
+                this.onError(err);
+            };
         } catch (e) {
-            console.error("Connection failed:", e);
+            console.error("[Connection] WebSocket constructor failed:", e);
         }
     }
 
@@ -232,7 +249,9 @@ export default class Connection {
         if (reader.has(4) && !this.statsLoopId) {
             reader.readUInt32(); // game type (unused)
             const serverName = reader.readStringUTF8();
-            if (/MultiOgar|OgarII/i.test(serverName)) {
+            console.log("Server name: ", serverName);
+
+            if (/MultiOgar|OgarII/i.test(serverName)) { // Reverted check
                 this.statsLoopId = setInterval(() => {
                     this.send(new Uint8Array([254])); // Request stats
                     this.statsLoopStamp = Date.now();

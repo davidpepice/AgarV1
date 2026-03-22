@@ -1,6 +1,7 @@
 import Connection from '../net/Connection.js';
 import Renderer from '../render/Renderer.js';
 import PixiRenderer from '../render/PixiRenderer.js';
+import PhaserRenderer from '../render/PhaserRenderer.js';
 import { BinaryWriter, BinaryReader, PROTOCOL } from '../net/Protocol.js';
 import { getSkinList } from '../utils/SkinLoader.js';
 import ShopAPI from '../api/ShopAPI.js';
@@ -60,7 +61,7 @@ class Game {
             connectingOverlay: document.getElementById('connecting-overlay'),
             connectingText: document.getElementById('connecting-text'),
             connectingSpinner: document.getElementById('connecting-spinner'),
-            gpuBtn: document.getElementById('gpu-btn')
+            rendererSelect: document.getElementById('renderer-select')
         };
 
         this.config = {
@@ -68,7 +69,7 @@ class Game {
             showMass: true,
             noSkins: false,
             darkTheme: true,
-            usePixi: false,
+            engine: 'pixi',
             noGrid: false,
             animationDelay: 120,
             coins: 5000,
@@ -120,11 +121,12 @@ class Game {
         this.pingInterval = null;
 
         this.servers = [
-            { id: 'local_ffa', name: 'Local FFA', url: this.connection.url, mode: 'FFA', players: '0' },
-            { id: 'local_teams', name: 'Local Teams', url: 'ws://localhost:8081', mode: 'Teams', players: '0' },
-            { id: 'public_1', name: 'Public NA', url: 'ws://127.0.0.1:8082', mode: 'FFA', players: '0' }
+            { id: 'local_ffa', name: 'Local FFA', ip: 'ws://localhost:8080', mode: 'FFA', players: '0' },
+            { id: 'local_teams', name: 'Local Teams', ip: 'ws://localhost:8081', mode: 'Teams', players: '0' },
+            { id: 'public_1', name: 'Public NA', ip: 'ws://127.0.0.1:8082', mode: 'FFA', players: '0' }
         ];
-        this.currentServerUrl = this.servers[0].url;
+
+        this.currentServerUrl = this.servers[0].ip;
 
         this.loadSettings();
         this.init();
@@ -173,14 +175,20 @@ class Game {
                     this.ui.darkTheme.checked = this.config.darkTheme;
                     
                     const webglSupported = Game.supportsWebGL();
-                    if (this.ui.gpuBtn) {
+                    if (this.ui.rendererSelect) {
                         if (!webglSupported) {
-                            this.ui.gpuBtn.checked = false;
-                            this.ui.gpuBtn.disabled = true;
-                            this.config.usePixi = false;
-                        } else {
-                            this.ui.gpuBtn.checked = this.config.usePixi;
+                            const pOpt = this.ui.rendererSelect.querySelector('option[value="pixi"]');
+                            if (pOpt) pOpt.disabled = true;
+                            const phOpt = this.ui.rendererSelect.querySelector('option[value="phaser"]');
+                            if (phOpt) phOpt.disabled = true;
+                            
+                            this.ui.rendererSelect.title = 'WebGL no está soportado en este navegador';
+                            this.config.engine = 'canvas';
                         }
+                        
+                        // Migrate legacy 'usePixi' to engine
+                        if (!this.config.engine) this.config.engine = this.config.usePixi ? 'pixi' : 'canvas';
+                        this.ui.rendererSelect.value = this.config.engine;
                     }
                     
                     this.ui.animDelay.value = this.config.animationDelay;
@@ -216,6 +224,10 @@ class Game {
     init() {
         this.resize();
         window.addEventListener('resize', () => this.resize());
+        
+        // Apply saved renderer setting on load
+        this.toggleRenderer(this.config.engine);
+
         this.ui.playBtn.addEventListener('click', () => this.handlePlay());
         this.ui.spectateBtn.addEventListener('click', () => this.handleSpectate());
 
@@ -260,27 +272,16 @@ class Game {
             this.config.darkTheme = e.target.checked;
             this.saveSettings();
         });
-        if (this.ui.gpuBtn) {
-            // Check WebGL support and disable if not available
-            const webglSupported = Game.supportsWebGL();
-            //console.log(`[Game] WebGL Support: ${webglSupported}`);
-            
-            if (!webglSupported) {
-                this.ui.gpuBtn.disabled = true;
-                this.ui.gpuBtn.title = 'WebGL no está soportado en este navegador';
-                this.config.usePixi = false;
-            }
-            
-            this.ui.gpuBtn.addEventListener('change', (e) => {
-                if (!webglSupported) {
-                    e.target.checked = false;
-                    return;
+        if (this.ui.rendererSelect) {
+            this.ui.rendererSelect.addEventListener('change', (e) => {
+                const wantsChange = confirm("¿Quieres cambiar el motor de renderizado? La página se recargará para aplicar los cambios.");
+                if (wantsChange) {
+                    this.config.engine = e.target.value;
+                    this.saveSettings();
+                    location.reload();
+                } else {
+                    e.target.value = this.config.engine;
                 }
-                
-                // Toggle GPU mode without page reload
-                this.config.usePixi = e.target.checked;
-                this.saveSettings();
-                this.toggleRenderer(this.config.usePixi);
             });
         }
         this.ui.animDelay.addEventListener('input', (e) => {
@@ -435,6 +436,7 @@ class Game {
     }
 
     showConnecting(message = "Connecting...") {
+        console.log(`[Game] showConnecting: ${message}`);
         this.ui.connectingText.textContent = message;
         this.ui.connectingOverlay.classList.remove('success', 'error');
         this.ui.connectingSpinner.style.display = 'block';
@@ -442,7 +444,9 @@ class Game {
     }
 
     showConnected() {
+        console.log('[Game] showConnected called');
         if (this.reconnectTimeout) {
+            console.log('[Game] Clearing reconnectTimeout');
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
         }
@@ -465,7 +469,7 @@ class Game {
         this.ui.connectingText.textContent = `Error connecting to '${serverName}'... Retrying in 2s.`;
         this.ui.connectingSpinner.style.display = 'none';
         this.ui.connectingOverlay.style.display = 'flex';
-
+        console.log(this.currentServerUrl);
         // Schedule auto-reconnect every 2 seconds
         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = setTimeout(() => {
@@ -504,15 +508,17 @@ class Game {
         
         // Update Pixi canvas if exists
         if (this.pixiRenderer) {
-            // Update Pixi canvas dimensions
             this.pixiRenderer.canvas.width = width;
             this.pixiRenderer.canvas.height = height;
             this.pixiRenderer.canvas.style.width = width + 'px';
             this.pixiRenderer.canvas.style.height = height + 'px';
-            
-            // Tell PixiRenderer about size change
             this.pixiRenderer.setSize(width, height);
             this.pixiRenderer.viewportScale = Math.min(width, height) / 1200;
+        }
+
+        // Update Phaser canvas if exists
+        if (this.phaserRenderer) {
+            this.phaserRenderer.resize();
         }
     }
 
@@ -544,23 +550,28 @@ class Game {
     }
     handleSpectate() {
         const nickname = this.ui.nickname.value || 'Unnamed';
-       /* const url = this.currentServerUrl || 'ws://localhost:8080';
+        const url = this.currentServerUrl || 'ws://localhost:8080';
 
+        this.nickname = nickname;
+        this.playing = false;
+        this.renderer.spectateTargetName = ""; 
+
+        // 1. If already connected to the correct server, just enter spectate mode
         if (this.connection.ws && this.connection.ws.readyState === WebSocket.OPEN && this.connection.url === url) {
             this.hideMenu();
-            this.playing = false;
+            // Clear own cells without showing menu
+            this.ownIds.forEach(id => this.nodes.delete(id));
+            this.ownIds = [];
             this.connection.spectate();
             return;
-        }*/
+        }
 
-        //this.showConnecting("Connecting to server...");
-        this.nickname = nickname;
+        // 2. Otherwise, connect in spectate mode
+        this.showConnecting("Connecting to server...");
+        this.reset(false); // Reset without showing menu
+        this.connection.connect(url, this.nickname, true, this.config.selectedSkin);
         this.hideMenu();
-        this.playing = false;
-
-        this.reset();
         this.saveSettings();
-       // this.connection.connect(url, this.nickname, true);
     }
 
     toggleFullscreen() {
@@ -607,24 +618,38 @@ class Game {
         if (!this.ui.serverList) return;
         
         this.ui.serverList.innerHTML = this.servers.map(server => `
-            <div class="server-item ${server.url === this.currentServerUrl ? 'active' : ''}" data-url="${server.url}">
+            <div class="server-item ${server.ip === this.currentServerUrl ? 'active' : ''}" data-url="${server.ip}">
                 <div class="server-info">
                     <span class="server-name">${server.name}</span>
                     <span class="server-mode">${server.mode}</span>
                 </div>
-                <span class="server-players" id="players-${server.url.replace(/\W/g, '')}">${server.players} P</span>
+                <span class="server-players" id="players-${server.ip.replace(/\W/g, '')}">${server.players} P</span>
             </div>
         `).join('');
 
         this.ui.serverList.querySelectorAll('.server-item').forEach(el => {
             el.addEventListener('click', () => {
-                // Update active class UI
+                const url = this.servers.find(s => s.ip === el.dataset.url);
+                console.log(url.ip);
+                
+                // Update active class UI always
                 this.ui.serverList.querySelectorAll('.server-item').forEach(s => s.classList.remove('active'));
                 el.classList.add('active');
                 
                 // Update internal state
-                this.currentServerUrl = el.dataset.url;
+                this.currentServerUrl = url.ip;
                 this.saveSettings();
+
+                // 1. Reset current game state
+                this.reset();
+                
+                // 2. Show feedback
+                const serverName = el.querySelector('.server-name').textContent;
+                this.showConnecting(`Connecting to '${serverName}'...`);
+                
+                // 3. Connect to the new server
+                // We maintain the current playing/spectating intent
+                this.connection.connect(url.ip, this.nickname || "Unnamed", !this.playing, this.config.selectedSkin);
             });
         });
     }
@@ -650,13 +675,17 @@ class Game {
         }
     }
 
-    reset() {
+    reset(showMenu = true) {
+        console.log('[Game] Resetting game state');
         this.clearAll();
         this.serverTime = 0;
         this.lastSyncLocal = 0;
         this.clockOffset = 0;
         this.mapCenterSet = false;
         this.renderer.serverCamera = false;
+        if (this.pixiRenderer) this.pixiRenderer.serverCamera = false;
+        if (this.phaserRenderer) this.phaserRenderer.serverCamera = false;
+        if (showMenu) this.showMenu(); // Ensure playing = false
     }
 
     clearAll() {
@@ -667,7 +696,7 @@ class Game {
     clearOwn() {
         this.ownIds.forEach(id => this.nodes.delete(id));
         this.ownIds = [];
-        this.showMenu();
+        // Removed showMenu() because it breaks spectate
     }
 
     showMenu() {
@@ -1059,102 +1088,72 @@ class Game {
         this.connection.send(writer.build());
     }
 
-    toggleRenderer(usePixi) {
-        if (usePixi && !this.activeRenderer.constructor.name.includes('Pixi')) {
-            // Switch TO PixiJS
-            try {
-                if (!this.pixiRenderer) {
-                    console.log('[Renderer] Initializing PixiJS v8...');
-                    this.pixiRenderer = new PixiRenderer(this);
-                    
-                    // Copy camera state from Canvas renderer
-                    this.pixiRenderer.camX = this.renderer.camX;
-                    this.pixiRenderer.camY = this.renderer.camY;
-                    this.pixiRenderer.scale = this.renderer.scale;
-                    this.pixiRenderer.target = { ...this.renderer.target };
-                }
-                
-                // Wait for initialization with timeout
-                const maxAttempts = 50; // 5 seconds max (50 * 100ms)
-                let attempts = 0;
-                
-                const checkReady = setInterval(() => {
-                    attempts++;
-                    
-                    if (this.pixiRenderer.ready) {
-                        clearInterval(checkReady);
-                        console.log('[Renderer] Switching to PixiJS');
-                        
-                        // Show Pixi canvas, hide 2D canvas
-                        document.getElementById('gameCanvas').style.display = 'none';
-                        this.pixiRenderer.canvas.style.display = 'block';
-                        
-                        this.activeRenderer = this.pixiRenderer;
-                        this.config.usePixi = true;
-                        this.saveSettings();
-                    } else if (this.pixiRenderer.initError) {
-                        clearInterval(checkReady);
-                        console.error('[Renderer] PixiJS initialization failed:', this.pixiRenderer.initError);
-                        this._fallbackToCanvas();
-                    } else if (attempts >= maxAttempts) {
-                        clearInterval(checkReady);
-                        console.warn('[Renderer] PixiJS initialization timeout');
-                        this._fallbackToCanvas();
-                    }
-                }, 100);
-            } catch (err) {
-                console.error('[Renderer] Error initializing PixiJS:', err);
-                this._fallbackToCanvas();
+    toggleRenderer(engine) {
+        // We will define this properly in the next step to support Phaser, Pixi, and Canvas
+        if (engine === 'phaser') {
+            if (!this.phaserRenderer) {
+                console.log('[Renderer] Initializing Phaser v3...');
+                this.phaserRenderer = new PhaserRenderer(this);
             }
-        } else if (!usePixi && this.activeRenderer.constructor.name.includes('Pixi')) {
-            // Switch BACK to Canvas 2D
-            console.log('[Renderer] Switching back to Canvas 2D');
+            // Hide other canvases
+            document.getElementById('gameCanvas').style.display = 'none';
+            if (this.pixiRenderer && this.pixiRenderer.canvas) this.pixiRenderer.canvas.style.display = 'none';
             
-            try {
-                // Hide Pixi canvas, show 2D canvas
-                if (this.pixiRenderer) {
-                    this.pixiRenderer.canvas.style.display = 'none';
-                    this.pixiRenderer.destroy();
-                }
-            } catch (err) {
-                console.error('[Renderer] Error destroying PixiJS:', err);
-            } finally {
-                this.pixiRenderer = null;
-                document.getElementById('gameCanvas').style.display = 'block';
-                this.activeRenderer = this.renderer;
-                this.config.usePixi = false;
-                this.saveSettings();
+            // Show Phaser canvas
+            if (this.phaserRenderer.canvas) this.phaserRenderer.canvas.style.display = 'block';
+            
+            this.activeRenderer = this.phaserRenderer;
+            this.config.engine = 'phaser';
+            
+        } else if (engine === 'pixi') {
+            if (!this.pixiRenderer) {
+                console.log('[Renderer] Initializing PixiJS v8...');
+                this.pixiRenderer = new PixiRenderer(this);
+                
+                this.pixiRenderer.camX = this.renderer.camX;
+                this.pixiRenderer.camY = this.renderer.camY;
+                this.pixiRenderer.scale = this.renderer.scale;
+                this.pixiRenderer.target = { ...this.renderer.target };
             }
+            
+            const maxAttempts = 50;
+            let attempts = 0;
+            const checkReady = setInterval(() => {
+                attempts++;
+                if (this.pixiRenderer.ready) {
+                    clearInterval(checkReady);
+                    document.getElementById('gameCanvas').style.display = 'none';
+                    if (this.phaserRenderer && this.phaserRenderer.canvas) this.phaserRenderer.canvas.style.display = 'none';
+                    this.pixiRenderer.canvas.style.display = 'block';
+                    this.activeRenderer = this.pixiRenderer;
+                } else if (this.pixiRenderer.initError || attempts >= maxAttempts) {
+                    clearInterval(checkReady);
+                    this._fallbackToCanvas();
+                }
+            }, 100);
+        } else {
+            console.log('[Renderer] Switching to Canvas 2D');
+            if (this.pixiRenderer) this.pixiRenderer.canvas.style.display = 'none';
+            if (this.phaserRenderer && this.phaserRenderer.canvas) this.phaserRenderer.canvas.style.display = 'none';
+            document.getElementById('gameCanvas').style.display = 'block';
+            this.activeRenderer = this.renderer;
         }
     }
 
     _fallbackToCanvas() {
         console.warn('[Renderer] Falling back to Canvas 2D renderer');
-        
-        // Cleanup Pixi if it exists
         if (this.pixiRenderer) {
-            try {
-                this.pixiRenderer.destroy();
-            } catch (e) {}
+            try { this.pixiRenderer.destroy(); } catch (e) {}
             this.pixiRenderer = null;
         }
-        
-        // Reset to Canvas
         this.activeRenderer = this.renderer;
-        this.config.usePixi = false;
-        
-        if (this.ui.gpuBtn) {
-            this.ui.gpuBtn.checked = false;
-        }
-        
+        this.config.engine = 'canvas';
+        if (this.ui.rendererSelect) this.ui.rendererSelect.value = 'canvas';
         this.saveSettings();
         
-        // Show warning to user
         const msg = 'WebGL no soportado en tu navegador. Usando Canvas 2D.';
         console.warn(msg);
-        if (this.ui.connectingText) {
-            this.ui.connectingText.textContent = msg;
-        }
+        if (this.ui.connectingText) this.ui.connectingText.textContent = msg;
     }
 
     static supportsWebGL() {

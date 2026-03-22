@@ -121,10 +121,14 @@
                     <label for="anim-delay">Animation Delay: <span id="anim-delay-value">120</span>ms</label>
                     <input type="range" id="anim-delay" min="50" max="240" value="120">
                 </div>
-                <label class="checkbox-container">
-                    <input type="checkbox" id="gpu-btn" checked>
-                    <span class="checkmark"></span> GPU
-                </label>
+                <div class="renderer-container" style="margin-top: 15px; text-align: left;">
+                    <label for="renderer-select" style="display:block; margin-bottom:5px;">Graphics Engine:</label>
+                    <select id="renderer-select" style="width:100%; padding:8px; background:var(--background-alt); border:1px solid var(--border-color); color:var(--text-main); border-radius:5px;">
+                        <option value="canvas">Canvas 2D (Basic)</option>
+                        <option value="pixi">PixiJS v8 (High FPS)</option>
+                        <option value="phaser">Phaser v3 (Test)</option>
+                    </select>
+                </div>
             </div>
         </div>
     </div>

@@ -51,6 +51,7 @@ export default class PixiRenderer {
 
         this.skinCache = new Map();
         this.nodeGfxMap = new Map();
+        this.jellyData = new Map();
 
         this.app = null;
         this.world = null;
@@ -134,6 +135,7 @@ export default class PixiRenderer {
         }
         this.nodeGfxMap.clear();
         this.skinCache.clear();
+        this.jellyData.clear();
         if (this.canvas.parentNode) {
             this.canvas.parentNode.removeChild(this.canvas);
         }
@@ -300,6 +302,7 @@ export default class PixiRenderer {
         let container = this.nodeGfxMap.get(node.id);
         if (!container) {
             container = new Container();
+            container.label = "node_" + node.id;
             this.nodeLayer.addChild(container);
             this.nodeGfxMap.set(node.id, container);
         }
@@ -317,16 +320,18 @@ export default class PixiRenderer {
             container.alpha = bornDiff < 100 ? bornDiff / 100 : 1;
         }
 
+        const jelly = this._updateJelly(node);
+
         // 1. Body Graphics (Solid Color)
-        let body = container.getChildByName("body");
+        let body = container.getChildByLabel("body");
         if (!body) {
             body = new Graphics();
-            body.name = "body";
+            body.label = "body";
             container.addChildAt(body, 0);
         }
         
         // 2. Skin Sprite
-        let skin = container.getChildByName("skin");
+        let skin = container.getChildByLabel("skin");
         const skinName = noSkins ? null : node.skin;
 
         if (node.jagged) {
@@ -334,10 +339,10 @@ export default class PixiRenderer {
             if (skin) skin.visible = false;
             body.clear();
             if (this.virusTexture) {
-                if (!skin || skin.name !== "virus") {
+                if (!skin || skin.label !== "virus") {
                     if (skin) container.removeChild(skin);
                     skin = new Sprite(this.virusTexture);
-                    skin.name = "virus";
+                    skin.label = "virus";
                     skin.anchor.set(0.5);
                     container.addChildAt(skin, 1);
                 }
@@ -349,19 +354,18 @@ export default class PixiRenderer {
             }
         } else {
             // Normal Cell logic
-            if (skin && skin.name === "virus") {
+            if (skin && skin.label === "virus") {
                 container.removeChild(skin);
                 skin = null;
             }
 
-            body.clear();
-            const color = new Color(node.color || "#00ff22").toNumber();
-            body.circle(0, 0, node.size).fill(color);
-
             if (skinName) {
-                this._applySkin(container, skinName, node.size);
-            } else if (skin) {
-                skin.visible = false;
+                this._applySkin(container, skinName, node.size, jelly);
+            } else {
+                if (skin) skin.visible = false;
+                
+                // Only show solid color if no skin is intended
+                this._drawBody(container, body, node.size, jelly);
             }
         }
 
@@ -369,97 +373,244 @@ export default class PixiRenderer {
         if (node.size > 20 && !node.jagged && !node.ejected) {
             this._drawNodeText(container, node);
         } else {
-            const label = container.getChildByName("label");
+            const label = container.getChildByLabel("label");
             if (label) label.visible = false;
         }
     }
 
-    async _applySkin(container, name, size) {
-        let skin = container.getChildByName("skin");
-        const texture = await this._getSkinTexture(name);
+    _applySkin(container, name, size, jelly) {
+        let skin = container.getChildByLabel("skin");
+        let body = container.getChildByLabel("body");
         
-        if (texture) {
-            if (!skin) {
-                skin = new Sprite(texture);
-                skin.name = "skin";
-                skin.anchor.set(0.5);
-                container.addChildAt(skin, 1);
-            } else {
-                skin.texture = texture;
-            }
-            skin.visible = true;
-            skin.width = skin.height = size * 2;
+        // 1. Get Texture (Sync or Async)
+        const texture = this._getSkinTexture(name);
+        
+        if (texture instanceof Texture) {
+            // Texture is already in cache
+            this._setupSkinSprite(container, skin, texture, size, jelly);
+            if (body) body.visible = false; // Hide body if skin is ready
+        } else if (texture instanceof Promise) {
+            // Texture is loading
+            this._drawBody(container, body, size, jelly);
             
-            // Mask skin to circle
-            let mask = container.getChildByName("skinMask");
-            if (!mask) {
-                mask = new Graphics();
-                mask.name = "skinMask";
-                container.addChild(mask);
-                skin.mask = mask;
-            }
-            mask.clear().circle(0, 0, size).fill(0xffffff);
-        } else if (skin) {
-            skin.visible = false;
+            texture.then(tex => {
+                if (tex && container.visible) {
+                    this._setupSkinSprite(container, skin, tex, size, jelly);
+                    if (body) body.visible = false;
+                } else if (!tex) {
+                    this._drawBody(container, body, size, jelly);
+                }
+            });
+        } else {
+            // Texture is null or failed
+            this._drawBody(container, body, size, jelly);
+            if (skin) skin.visible = false;
         }
     }
 
-    async _getSkinTexture(name) {
+    _drawBody(container, body, size, jelly) {
+        if (!body) return;
+        const id = parseInt(container.label.replace('node_', ''));
+        const node = this.game.nodes.get(id) || {};
+        const color = new Color(node.color || "#00ff22").toNumber();
+        
+        if (jelly && jelly.points && !node.jagged) {
+            body.clear();
+            const pts = jelly.points;
+            if (pts.length > 0) {
+                body.moveTo(
+                    (pts[0].x + pts[pts.length - 1].x) / 2,
+                    (pts[0].y + pts[pts.length - 1].y) / 2
+                );
+                for (let i = 0; i < pts.length; i++) {
+                    const p1 = pts[i];
+                    const p2 = pts[(i + 1) % pts.length];
+                    const midX = (p1.x + p2.x) / 2;
+                    const midY = (p1.y + p2.y) / 2;
+                    body.quadraticCurveTo(p1.x, p1.y, midX, midY);
+                }
+                body.fill(color);
+            }
+            body.scale.set(1);
+            body._wasJelly = true;
+        } else {
+            // Optimization: If it's just a circle, draw it once and scale it
+            if (body._lastColor !== color || body._wasJelly || !body._hasCircle) {
+                body.clear();
+                body.circle(0, 0, 100).fill(color);
+                body._lastColor = color;
+                body._wasJelly = false;
+                body._hasCircle = true;
+            }
+            body.scale.set(size / 100);
+        }
+        body.visible = true;
+    }
+
+    _setupSkinSprite(container, skin, texture, size, jelly) {
+        if (!skin) {
+            skin = new Sprite(texture);
+            skin.label = "skin";
+            skin.anchor.set(0.5);
+            container.addChildAt(skin, 1);
+        } else {
+            skin.texture = texture;
+        }
+
+        skin.visible = true;
+        skin.width = skin.height = size * 2;
+
+        let mask = container.getChildByLabel("skinMask");
+        if (!mask) {
+            mask = new Graphics();
+            mask.label = "skinMask";
+            container.addChild(mask);
+            skin.mask = mask;
+        }
+        
+        if (jelly && jelly.points) {
+            mask.clear();
+            const pts = jelly.points;
+            if (pts.length > 0) {
+                mask.moveTo(
+                    (pts[0].x + pts[pts.length - 1].x) / 2,
+                    (pts[0].y + pts[pts.length - 1].y) / 2
+                );
+                for (let i = 0; i < pts.length; i++) {
+                    const p1 = pts[i];
+                    const p2 = pts[(i + 1) % pts.length];
+                    const midX = (p1.x + p2.x) / 2;
+                    const midY = (p1.y + p2.y) / 2;
+                    mask.quadraticCurveTo(p1.x, p1.y, midX, midY);
+                }
+                mask.fill(0xffffff);
+            }
+            mask.scale.set(1);
+            mask._wasJelly = true;
+        } else {
+            // Optimization: If it's a circle, draw it once and scale it
+            if (mask._wasJelly || !mask._hasCircle) {
+                mask.clear();
+                mask.circle(0, 0, 100).fill(0xffffff);
+                mask._wasJelly = false;
+                mask._hasCircle = true;
+            }
+            mask.scale.set(size / 100);
+        }
+    }
+
+    _getSkinTexture(name) {
         if (!name) return null;
         name = name.toLowerCase().trim();
         if (this.skinCache.has(name)) return this.skinCache.get(name);
 
-        try {
-            const tex = await Assets.load(`./skins/${name}.png`);
-            this.skinCache.set(name, tex);
-            return tex;
-        } catch (e) {
-            // Fallback to error skin if needed, or just return null
-            return null;
-        }
+        // Not in cache, start loading and return the promise
+        const promise = Assets.load(`./skins/${name}.png`)
+            .then(tex => {
+                this.skinCache.set(name, tex);
+                return tex;
+            })
+            .catch(() => {
+                this.skinCache.set(name, null); // Don't try again for this item
+                return null;
+            });
+            
+        this.skinCache.set(name, promise);
+        return promise;
     }
 
     _drawNodeText(container, node) {
         const showName = this.game.config.showNames && node.name;
         const showMass = this.game.config.showMass;
+
+        let nameLabel = container.getChildByLabel("nameLabel");
+        let massLabel = container.getChildByLabel("massLabel");
+
         if (!showName && !showMass) {
-            const label = container.getChildByName("label");
-            if (label) label.visible = false;
+            if (nameLabel) nameLabel.visible = false;
+            if (massLabel) massLabel.visible = false;
             return;
         }
 
-        let label = container.getChildByName("label");
-        let textContent = "";
-        if (showName) textContent += Game_parseName(node.name);
+        const nameText = showName ? Game_parseName(node.name) : "";
+        const massText = showMass ? Math.floor((node.size * node.size) / 100).toString() : "";
+
+        // Render Name Layer
+        if (showName) {
+            if (!nameLabel) {
+                nameLabel = new Text({
+                    text: nameText,
+                    style: {
+                        fontFamily: "Inter, sans-serif",
+                        fontWeight: "bold",
+                        fill: "#ffffff",
+                        stroke: { color: "#000000", width: 5 },
+                        align: "center",
+                        fontSize: 48
+                    }
+                });
+                nameLabel.label = "nameLabel";
+                nameLabel.anchor.set(0.5);
+                container.addChild(nameLabel);
+            } else {
+                // VERY IMPORTANT FOR FPS: Only update text if it actually changed!
+                if (nameLabel.text !== nameText) nameLabel.text = nameText;
+                nameLabel.visible = true;
+            }
+        } else if (nameLabel) {
+            nameLabel.visible = false;
+        }
+
+        // Render Mass Layer
         if (showMass) {
-            const mass = Math.floor((node.size * node.size) / 100);
-            if (textContent) textContent += "\n";
-            textContent += mass;
+            if (!massLabel) {
+                massLabel = new Text({
+                    text: massText,
+                    style: {
+                        fontFamily: "Inter, sans-serif",
+                        fontWeight: "bold",
+                        fill: "#ffffff",
+                        stroke: { color: "#000000", width: 4 },
+                        align: "center",
+                        fontSize: 32
+                    }
+                });
+                massLabel.label = "massLabel";
+                massLabel.anchor.set(0.5);
+                container.addChild(massLabel);
+            } else {
+                if (massLabel.text !== massText) massLabel.text = massText;
+                massLabel.visible = true;
+            }
+        } else if (massLabel) {
+            massLabel.visible = false;
         }
 
-        if (!label) {
-            label = new Text({
-                text: textContent,
-                style: {
-                    fontFamily: "Inter, sans-serif",
-                    fontWeight: "bold",
-                    fill: "#ffffff",
-                    stroke: { color: "#000000", width: 4 },
-                    align: "center",
-                    fontSize: 40
-                }
-            });
-            label.name = "label";
-            label.anchor.set(0.5);
-            container.addChild(label);
-        } else {
-            label.text = textContent;
-            label.visible = true;
-        }
+        // Positioning and Scaling
+        const targetW = node.size * 1.5;
 
-        const targetW = node.size * 1.2;
-        const scale = targetW / label.width;
-        label.scale.set(Math.min(scale, 1));
+        // Clean up legacy label from previous version if it exists
+        const oldLabel = container.getChildByLabel("label");
+        if (oldLabel) container.removeChild(oldLabel);
+
+        if (showName && showMass) {
+            const nScale = Math.min(targetW / (nameLabel.width || 1), 1);
+            const mScale = Math.min((targetW * 0.7) / (massLabel.width || 1), 1);
+            nameLabel.scale.set(nScale);
+            massLabel.scale.set(mScale);
+            
+            const totalH = nameLabel.height + massLabel.height;
+            nameLabel.y = -(totalH * 0.15);
+            massLabel.y = (totalH * 0.35);
+        } else if (showName) {
+            const nScale = Math.min(targetW / Math.max(nameLabel.width, 1), 1);
+            nameLabel.scale.set(nScale);
+            nameLabel.y = 0;
+        } else if (showMass) {
+            const mScale = Math.min(targetW / Math.max(massLabel.width, 1), 1);
+            massLabel.scale.set(mScale);
+            massLabel.y = 0;
+        }
     }
 
     _removeNodeGfx(id) {
@@ -467,7 +618,100 @@ export default class PixiRenderer {
         if (container) {
             container.destroy({ children: true });
             this.nodeGfxMap.delete(id);
+            this.jellyData.delete(id);
         }
+    }
+
+    _updateJelly(node) {
+        if (node.jagged || node.size < 15) return null;
+
+        let jelly = this.jellyData.get(node.id);
+        const count = 40; // Reduced from 60 to 40 for optimal CPU performance
+
+        if (!jelly) {
+            jelly = {
+                points: [],
+                lastX: node.x,
+                lastY: node.y,
+                lastSize: node.size
+            };
+            for(let i = 0; i < count; i++) {
+                const angle = (i / count) * Math.PI * 2;
+                jelly.points.push({
+                    x: Math.cos(angle) * node.size,
+                    y: Math.sin(angle) * node.size,
+                    vx: 0,
+                    vy: 0,
+                    angle: angle
+                });
+            }
+            this.jellyData.set(node.id, jelly);
+        }
+
+        let diffX = node.x - jelly.lastX;
+        let diffY = node.y - jelly.lastY;
+        const maxDelta = node.size * 1.5; 
+        if (diffX > maxDelta) diffX = maxDelta;
+        if (diffX < -maxDelta) diffX = -maxDelta;
+        if (diffY > maxDelta) diffY = maxDelta;
+        if (diffY < -maxDelta) diffY = -maxDelta;
+
+        const dSize = node.size - jelly.lastSize;
+
+        jelly.lastX = node.x;
+        jelly.lastY = node.y;
+        jelly.lastSize = node.size;
+
+        const inertia = 0.45;  
+        const stiffness = 0.35; 
+        const damping = 0.65; 
+
+        const borders = this.game.borders;
+
+        for (let i = 0; i < jelly.points.length; i++) {
+            const p = jelly.points[i];
+            
+            const targetX = Math.cos(p.angle) * node.size;
+            const targetY = Math.sin(p.angle) * node.size;
+            
+            p.vx -= diffX * inertia;
+            p.vy -= diffY * inertia;
+            
+            if (dSize !== 0) {
+                p.vx += Math.cos(p.angle) * dSize;
+                p.vy += Math.sin(p.angle) * dSize;
+            }
+
+            p.vx += (targetX - p.x) * stiffness;
+            p.vy += (targetY - p.y) * stiffness;
+            
+            // Limit max velocity to prevent polygon inversion (the "square" bug)
+            const maxV = node.size * 0.8;
+            if (p.vx > maxV) p.vx = maxV;
+            if (p.vx < -maxV) p.vx = -maxV;
+            if (p.vy > maxV) p.vy = maxV;
+            if (p.vy < -maxV) p.vy = -maxV;
+
+            p.vx *= damping;
+            p.vy *= damping;
+            
+            p.x += p.vx;
+            p.y += p.vy;
+
+            const worldX = node.x + p.x;
+            const worldY = node.y + p.y;
+
+            // Border Collision (Squish against map bounds)
+            if (borders) {
+                if (worldX < borders.l) { p.x = borders.l - node.x; p.vx *= -0.8; }
+                else if (worldX > borders.r) { p.x = borders.r - node.x; p.vx *= -0.8; }
+                
+                if (worldY < borders.t) { p.y = borders.t - node.y; p.vy *= -0.8; }
+                else if (worldY > borders.b) { p.y = borders.b - node.y; p.vy *= -0.8; }
+            }
+        }
+
+        return jelly;
     }
 
     _drawDirectionArrow() {
@@ -494,10 +738,10 @@ export default class PixiRenderer {
             if (d > maxDist) maxDist = d;
         });
 
-        let arrow = this.uiLayer.getChildByName("arrow");
+        let arrow = this.uiLayer.getChildByLabel("arrow");
         if (!arrow) {
             arrow = new Graphics();
-            arrow.name = "arrow";
+            arrow.label = "arrow";
             this.uiLayer.addChild(arrow);
         }
 
