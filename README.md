@@ -38,4 +38,4 @@ El código se ha estructurado siguiendo principios de escalabilidad:
 3. ¡Ingresa tu nick y domina el mapa!
 
 ---
-*Desarrollado con precisión técnica por Antigravity.*
+*.*
