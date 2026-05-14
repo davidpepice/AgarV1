@@ -3,7 +3,11 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#0c0d10">
     <title>AgarV1 | Client</title>
     <link rel="stylesheet" href="/src/index.css">
 </head>
@@ -11,135 +15,174 @@
 <body>
     <canvas id="gameCanvas"></canvas>
 
-    <div id="main-menu" class="overlay">
-        <div id="connecting-overlay">
-            <div class="connecting-content">
-                <div id="connecting-spinner" class="spinner"></div>
-                <p id="connecting-text">Connecting to server...</p>
-            </div>
+    <!-- Toast de Conexión (Estilo Bootstrap Popup) -->
+    <div id="connecting-overlay">
+        <div class="connecting-content">
+            <div id="connecting-spinner" class="spinner"></div>
+            <p id="connecting-text">Connecting to server...</p>
         </div>
-        <h1>AgarV1</h1>
+    </div>
 
-        <div class="menu-tabs">
-            <button class="tab-btn active" data-tab="tab-play">Play</button>
-            <button class="tab-btn" data-tab="tab-shop">Shop</button>
-            <button class="tab-btn" data-tab="tab-settings">Settings</button>
-            <button class="tab-btn" data-tab="tab-hotkeys">Hotkeys</button>
-        </div>
-
-        <div id="tab-play" class="tab-content active">
-            <div class="input-group">
-                <input type="text" id="nickname" placeholder="Nickname" maxlength="15">
-                <input type="text" id="server-url" value="ws://localhost:8080" placeholder="Server URL">
-            </div>
-            <div class="button-group">
-                <button id="play-btn">Play</button>
-                <button id="spectate-btn">Spectate</button>
-            </div>
-        </div>
-
-        <div id="tab-shop" class="tab-content">
-            <div class="shop-header">
-                <span class="currency"><i class="icon-coin"></i> <span id="user-coins">0</span> Coins</span>
-            </div>
-            <div class="shop-container">
-                <div class="shop-sidebar">
-                    <button class="shop-cat-btn active" data-cat="level">Level</button>
-                    <button class="shop-cat-btn" data-cat="owner">Owner</button>
-                    <button class="shop-cat-btn" data-cat="premium">Premium</button>
-                    <button class="shop-cat-btn" data-cat="coins">Coins</button>
-                </div>
-                <div class="shop-main">
-                    <div id="shop-grid" class="shop-grid">
-                        <!-- Items will be injected here -->
+    <div id="main-menu" class="menu-overlay">
+        <div class="menu-container">
+            <!-- Columna Izquierda: Perfil / Tienda / Stats -->
+            <div class="menu-col left-col">
+                <div class="panel profile-panel">
+                    <div class="profile-header">
+                        <div class="profile-avatar">
+                            <canvas id="skin-preview-canvas" width="60" height="60"></canvas>
+                        </div>
+                        <div class="profile-info">
+                            <div class="profile-name">Player</div>
+                            <div class="profile-level">
+                                <div class="level-bar-bg">
+                                    <div class="level-bar-fill" style="width: 45%;"></div>
+                                </div>
+                                <span class="level-text">Lvl 1</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div class="shop-preview">
-                    <h3>Preview</h3>
-                    <div id="skin-preview-container">
-                        <canvas id="skin-preview-canvas" width="200" height="200"></canvas>
-                        <div id="preview-name">Select a skin</div>
+                
+                <div class="panel shop-mini-panel">
+                    <div class="shop-header">
+                        <h3>Shop & Offers</h3>
+                        <span class="currency"><i class="icon-coin"></i> <span id="user-coins">0</span></span>
                     </div>
-                    <button id="buy-select-btn" class="shop-action-btn" disabled>Select Skin</button>
+                    <!-- Botón para abrir la tienda completa (como modal) -->
+                    <button class="btn btn-secondary" onclick="document.getElementById('modal-shop').classList.add('active')">Open Shop</button>
+                </div>
+            </div>
+
+            <!-- Columna Central: Título y Jugar -->
+            <div class="menu-col center-col">
+                <div class="panel play-panel">
+                    <div class="title-container">
+                        <h1>AgarV1</h1>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="nickname" placeholder="Nick" maxlength="15">
+                    </div>
+                    <button id="play-btn" class="btn btn-play">Play</button>
+                    <button id="spectate-btn" class="btn btn-spectate">Spectate</button>
+                    <footer class="menu-footer">
+                        <p>&copy; 2023 AgarV1. All rights reserved.</p>
+                    </footer>
+                     
+                </div>
+            </div>
+
+            <!-- Columna Derecha: Configuración / Modos / Extra -->
+            <div class="menu-col right-col">
+                <div class="panel servers-panel">
+                    <h3>Servers</h3>
+                    <div id="server-list" class="server-list">
+                        <!-- Servidores inyectados por JS -->
+                    </div>
+                </div>
+                
+                <div class="panel actions-panel">
+                    <button class="btn btn-square" onclick="document.getElementById('modal-settings').classList.add('active')">
+                        <span class="icon">⚙️</span> Settings
+                    </button>
+                    <button class="btn btn-square" onclick="document.getElementById('modal-hotkeys').classList.add('active')">
+                        <span class="icon">⌨️</span> Hotkeys
+                    </button>
                 </div>
             </div>
         </div>
+    </div>
 
-        <div id="tab-settings" class="tab-content">
+    <!-- Modales para Pestañas Secundarias -->
+    <div id="modal-settings" class="modal">
+        <div class="modal-content panel">
+            <div class="modal-header">
+                <h2>Settings</h2>
+                <button class="close-btn" onclick="this.closest('.modal').classList.remove('active')">&times;</button>
+            </div>
             <div class="settings-box">
                 <label class="checkbox-container">
                     <input type="checkbox" id="show-names" checked>
-                    <span class="checkmark"></span>
-                    Show Names
+                    <span class="checkmark"></span> Show Names
                 </label>
                 <label class="checkbox-container">
                     <input type="checkbox" id="show-mass" checked>
-                    <span class="checkmark"></span>
-                    Show Mass
+                    <span class="checkmark"></span> Show Mass
                 </label>
                 <label class="checkbox-container">
                     <input type="checkbox" id="no-skins">
-                    <span class="checkmark"></span>
-                    No Skins
+                    <span class="checkmark"></span> No Skins
                 </label>
                 <label class="checkbox-container">
                     <input type="checkbox" id="dark-theme" checked>
-                    <span class="checkmark"></span>
-                    Dark Mode
+                    <span class="checkmark"></span> Dark Mode
                 </label>
                 <div class="slider-container">
                     <label for="anim-delay">Animation Delay: <span id="anim-delay-value">120</span>ms</label>
                     <input type="range" id="anim-delay" min="50" max="240" value="120">
                 </div>
+                <div class="renderer-container" style="margin-top: 15px; text-align: left;">
+                    <label for="renderer-select" style="display:block; margin-bottom:5px;">Graphics Engine:</label>
+                    <select id="renderer-select" style="width:100%; padding:8px; background:var(--background-alt); border:1px solid var(--border-color); color:var(--text-main); border-radius:5px;">
+                        <option value="canvas">Canvas 2D (Basic)</option>
+                        <option value="pixi">PixiJS v8 (High FPS)</option>
+                        <option value="phaser">Phaser v3 (Test)</option>
+                    </select>
+                </div>
             </div>
         </div>
+    </div>
 
-        <div id="tab-hotkeys" class="tab-content">
+    <div id="modal-hotkeys" class="modal">
+        <div class="modal-content panel">
+            <div class="modal-header">
+                <h2>Hotkeys</h2>
+                <button class="close-btn" onclick="this.closest('.modal').classList.remove('active')">&times;</button>
+            </div>
             <div class="hotkeys-section">
-                <div class="hotkey-item">
-                    <span>Split</span>
-                    <button class="key-btn" id="key-split" data-action="split">Space</button>
+                <!-- Se inyectan las hotkeys existentes -->
+                <div class="hotkey-item"><span>Split</span><button class="key-btn" id="key-split" data-action="split">Space</button></div>
+                <div class="hotkey-item"><span>Feed</span><button class="key-btn" id="key-feed" data-action="feed">W</button></div>
+                <div class="hotkey-item"><span>Double Split</span><button class="key-btn" id="key-double" data-action="double">Q</button></div>
+                <div class="hotkey-item"><span>Triple Split</span><button class="key-btn" id="key-triple" data-action="triple">E</button></div>
+                <div class="hotkey-item"><span>Quad Split</span><button class="key-btn" id="key-quad" data-action="quad">C</button></div>
+                <div class="hotkey-item"><span>Macro Feed</span><button class="key-btn" id="key-macro" data-action="macro">Z</button></div>
+                <div class="hotkey-item"><span>Bot Split</span><button class="key-btn" id="key-botSplit" data-action="botSplit">E</button></div> 
+                <div class="hotkey-item"><span>Bot Feed</span><button class="key-btn" id="key-botFeed" data-action="botFeed">R</button></div>
+                <div class="hotkey-item"><span>Freeze</span><button class="key-btn" id="key-freeze" data-action="freeze">F</button></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="modal-shop" class="modal">
+        <div class="modal-content panel modal-large">
+            <div class="modal-header">
+                <h2>Shop</h2>
+                <button class="close-btn" onclick="this.closest('.modal').classList.remove('active')">&times;</button>
+            </div>
+            <!-- Estructura de shop simplificada para el modal -->
+            <div class="shop-container">
+                <div class="shop-sidebar">
+                    <button class="shop-cat-btn active" data-cat="level">Level</button>
+                    <button class="shop-cat-btn" data-cat="owner">Owner</button>
+                    <button class="shop-cat-btn" data-cat="coins">Coins</button>
                 </div>
-                <div class="hotkey-item">
-                    <span>Feed</span>
-                    <button class="key-btn" id="key-feed" data-action="feed">W</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Double Split</span>
-                    <button class="key-btn" id="key-double" data-action="double">Q</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Triple Split</span>
-                    <button class="key-btn" id="key-triple" data-action="triple">E</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Quad Split</span>
-                    <button class="key-btn" id="key-quad" data-action="quad">C</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Macro Feed</span>
-                    <button class="key-btn" id="key-macro" data-action="macro">Z</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Bot Split</span>
-                    <button class="key-btn" id="key-bot-split" data-action="botSplit">R</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Bot Feed</span>
-                    <button class="key-btn" id="key-bot-feed" data-action="botFeed">T</button>
-                </div>
-                <div class="hotkey-item">
-                    <span>Freeze</span>
-                    <button class="key-btn" id="key-freeze" data-action="freeze">F</button>
+                <div class="shop-main">
+                    <div id="shop-grid" class="shop-grid"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div id="leaderboard" class="hud-item" style="display: none;">
-        <h3>Leaderboard</h3>
-        <ol id="lb-list"></ol>
-    </div>
+    <!-- HUD Elements (in-game) -->
+    <div id="hud-container">
+        <button id="fullscreen-btn" class="hud-btn" title="Fullscreen">⛶</button>
+        <button id="toggle-ui-btn" class="hud-btn" title="Toggle UI">👁</button>
+        
+        <div id="leaderboard" class="hud-panel" style="display: none;">
+            <h3>Leaderboard</h3>
+            <ol id="lb-list"></ol>
+        </div>
 
     <div id="touch-controls" style="display: none;">
         <div id="joystick-container">
@@ -151,13 +194,15 @@
         </div>
     </div>
 
-    <div id="stats" class="hud-item" style="display: none;">
+    <div id="stats" class="hud-panel" style="display: none;">
         <span id="fps">FPS: 0</span>
         <span id="mass">Mass: 0</span>
         <span id="ping">Ping: 0</span>
     </div>
+    </div> <!-- Cierra hud-container -->
 
     <script src="src/core/Game.js" type="module"></script>
 </body>
+
 
 </html>

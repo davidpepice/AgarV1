@@ -16,7 +16,7 @@ export default class Renderer {
             scale: 1
         };
         this.scale = 1;
-        this.userZoom = 1;
+        this.userZoom = 2.5;
         this.viewportScale = 1;
         this.serverCamera = true; // true when server sends 0x11
         this.gridSize = 40;
@@ -28,6 +28,16 @@ export default class Renderer {
     setSize(w, h) {
         this.width = w;
         this.height = h;
+        
+        // Actualizar el ratio del dispositivo
+        const dpr = window.devicePixelRatio || 1;
+        this.canvas.width = w * dpr;
+        this.canvas.height = h * dpr;
+        this.canvas.style.width = w + 'px';
+        this.canvas.style.height = h + 'px';
+        
+        // Escalar el contexto
+        this.ctx.scale(dpr, dpr);
     }
 
     interpolateNodes() {
@@ -82,7 +92,7 @@ export default class Renderer {
 
 
         // Smooth lerp toward target (Cigar2 style)
-        const lerpFactor = 0.1;
+        const lerpFactor = 0.05;
         this.camX += (this.target.x - this.camX) * lerpFactor;
         this.camY += (this.target.y - this.camY) * lerpFactor;
         this.scale += (this.target.scale - this.scale) * 0.05;
@@ -107,9 +117,9 @@ export default class Renderer {
 
         this.drawGrid(ctx);
         this.drawBorders(ctx);
-        this.drawNodes(ctx);
+        this.drawCell(ctx);
 
-        if (this.game.isMobile && this.game.joystick.active) {
+        if (this.game.isMobile || this.game.joystick.active) {
             this.drawDirectionArrow(ctx);
         }
 
@@ -144,11 +154,11 @@ export default class Renderer {
         ctx.strokeRect(b.l, b.t, b.r - b.l, b.b - b.t);
     }
 
-    drawNodes(ctx) {
+    drawCell(ctx) {
         const sortedNodes = Array.from(this.game.nodes.values()).sort((a, b) => a.size - b.size);
 
         // 1. Calculate Viewport Bounds with Margin (prevents flickering at edges)
-        const margin = 100;
+        const margin = 100 / this.scale; // Margin in world units, scaled by camera zoom
         const halfW = (this.width / 2) / this.scale;
         const halfH = (this.height / 2) / this.scale;
         const viewL = this.camX - halfW - margin;

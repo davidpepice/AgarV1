@@ -5,28 +5,48 @@ export default class Connection {
         this.game = game;
         this.ws = null;
         this.url = '';
+        this.statsLoopId = null;
+        this.statsLoopStamp = 0;
     }
 
     connect(url, nickname, spectate = false, skin = "") {
+        console.log(`[Connection] Attempting to connect to: ${url} (Spectate: ${spectate}, Nick: ${nickname})`);
         this.url = url;
         this.initialSkin = skin;
-        //console.log(`Connecting to ${url}...`);
 
         if (this.ws) {
+            console.log(`[Connection] Closing existing WebSocket to ${this.ws.url}`);
             this.ws.onopen = this.ws.onmessage = this.ws.onclose = this.ws.onerror = null;
             this.ws.close();
+        }
+        //this.stopStatsLoop(); 
+        
+        // Clear any reconnection timer from previous server
+        if (this.game.reconnectTimeout) {
+            console.log('[Connection] Clearing old reconnect timeout');
+            clearTimeout(this.game.reconnectTimeout);
+            this.game.reconnectTimeout = null;
         }
 
         try {
             this.ws = new WebSocket(url);
             this.ws.binaryType = 'arraybuffer';
 
-            this.ws.onopen = () => this.onOpen(nickname, spectate);
+            this.ws.onopen = () => {
+                console.log(`[Connection] WebSocket opened: ${url}`);
+                this.onOpen(nickname, spectate);
+            };
             this.ws.onmessage = (msg) => this.onMessage(msg);
-            this.ws.onclose = () => this.onClose();
-            this.ws.onerror = (err) => this.onError(err);
+            this.ws.onclose = (e) => {
+                console.log(`[Connection] WebSocket closed: ${url}`, e.code, e.reason);
+                this.onClose();
+            };
+            this.ws.onerror = (err) => {
+                console.error(`[Connection] WebSocket error: ${url}`, err);
+                this.onError(err);
+            };
         } catch (e) {
-            console.error("Connection failed:", e);
+            console.error("[Connection] WebSocket constructor failed:", e);
         }
     }
 
@@ -64,9 +84,19 @@ export default class Connection {
         this.send(writer.build());
     }
 
-    onMessage(msg) {
+    async onMessage(msg) {
         this.game.updatePing();
-        const reader = new BinaryReader(new DataView(msg.data));
+        
+        // Ensure data is ArrayBuffer (it might be Blob if binaryType failed or was changed)
+        let data = msg.data;
+        if (data instanceof Blob) {
+            data = await data.arrayBuffer();
+        } else if (!(data instanceof ArrayBuffer)) {
+            // console.warn("Received non-binary message:", data);
+            return;
+        }
+
+        const reader = new BinaryReader(new DataView(data));
         const packetId = reader.readUInt8();
         try {
             switch (packetId) {
@@ -105,9 +135,26 @@ export default class Connection {
                 case 0x63: // CHAT
                     // Handle chat if needed
                     break;
+                case 254: // STATS
+                    this.handleStats(reader);
+                    break;
             }
         } catch (e) {
             // console.error("Parse error packet", packetId, e);
+        }
+    }
+
+    handleStats(reader) {
+        try {
+            const jsonString = reader.readStringUTF8();
+            if (jsonString) {
+                const stats = JSON.parse(jsonString);
+                if (this.game.updateServerStats) {
+                    this.game.updateServerStats(stats, this.url);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to parse server stats JSON", e);
         }
     }
 
@@ -186,26 +233,57 @@ export default class Connection {
         this.game.borders = { l, t, r, b };
 
         // Center camera on first border receipt (Cigar2 style)
-        /* if (!this.game.mapCenterSet) {
-             this.game.mapCenterSet = true;
-             const centerX = (l + r) / 2;
-             const centerY = (t + b) / 2;
-             const renderer = this.game.renderer;
-             renderer.camX = renderer.target.x = centerX;
-             renderer.camY = renderer.target.y = centerY;
-             renderer.scale = renderer.target.scale = 1;
-         }*/
+        if (!this.game.mapCenterSet) {
+            this.game.mapCenterSet = true;
+            const centerX = (l + r) / 2;
+            const centerY = (t + b) / 2;
+            const renderer = this.game.renderer;
+            renderer.camX = renderer.target.x = centerX;
+            renderer.camY = renderer.target.y = centerY;
+            renderer.scale = renderer.target.scale = 1;
+        }
+
+        // Cigar2-style: the 0x41 packet from MultiOgar/OgarII includes
+        // extra bytes after the 4 float64s: a uint32 (game type) + a UTF8 server name.
+        // Only start the stats ping loop once we confirm it's a compatible server.
+        if (reader.has(4) && !this.statsLoopId) {
+            reader.readUInt32(); // game type (unused)
+            const serverName = reader.readStringUTF8();
+            console.log("Server name: ", serverName);
+
+            if (/MultiOgar|OgarII/i.test(serverName)) { // Reverted check
+                this.statsLoopId = setInterval(() => {
+                    this.send(new Uint8Array([254])); // Request stats
+                    this.statsLoopStamp = Date.now();
+                }, 2000);
+                // Fire immediately for a faster first update
+                this.send(new Uint8Array([254]));
+                this.statsLoopStamp = Date.now();
+            }
+        }
+    }
+
+    stopStatsLoop() {
+        if (this.statsLoopId) {
+            clearInterval(this.statsLoopId);
+            this.statsLoopId = null;
+        }
     }
 
     onClose() {
-        console.log("Disconnected.");
+        // console.log("Disconnected.");
+        this.stopStatsLoop();
         this.game.ui.mainMenu.style.display = 'flex';
+        // Give a slight visual feedback if we suddenly drop while playing
+        if (this.game.playing && this.game.showConnectionError) {
+            this.game.showConnectionError(this.game.servers.name);
+        }
     }
 
     onError(err) {
-        console.error("WebSocket error:", err);
-        if (this.game.hideConnecting) {
-            this.game.hideConnecting();
+        // console.error("WebSocket error:", err);
+        if (this.game.showConnectionError) {
+            this.game.showConnectionError(this.url);
         }
     }
 
